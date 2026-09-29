@@ -8,6 +8,9 @@ Stage 8:  with a plan, `build` is replaced by a task loop:
 Stage 9:  run_task → verify: the harness runs each task's done_when itself;
           a failed check sends the task back to run_task in fix mode.
           final_check re-runs every check before finish.
+Stage 10: final_check → judge: a separate model call compares the project with
+          the request; revise sends feedback back through the planner,
+          escalate hands a REPORT.md to a human.
 """
 
 from __future__ import annotations
@@ -22,9 +25,11 @@ from typing import Callable
 
 from build import execute_build, list_files, open_run, start_run
 from checks import run_check
+from judge import (apply_rules, final_checks_evidence, make_verdict, render_report, tasks_evidence,
+                   workspace_contents)
 from graph import END, Graph
 from loop import Step
-from planner import PlanError, load_plan, make_plan, render_tasks, save_plan
+from planner import PlanError, load_plan, make_plan, render_tasks, revise_plan, revision_section, save_plan
 from runtime import build_registry
 from state import BuildState, load_state, save_state
 from replies import NormalizingModel
@@ -156,10 +161,12 @@ def build_graph(ctx: Context) -> Graph:
     cfg_build = ctx.config.get("build", {})
     cfg_plan = ctx.config.get("plan", {})
     cfg_verify = ctx.config.get("verify", {})
+    cfg_judge = ctx.config.get("judge", {})
     P = ctx.prompts
     max_tasks = cfg_plan.get("max_tasks", 12)
-    load_limit = max_tasks
+    load_limit = max_tasks * 2              # revisions may add tasks (Stage 10)
     max_fix = cfg_verify.get("max_fix_attempts", 2)
+    max_revisions = cfg_judge.get("max_revisions", 2)
 
     def loop_model():
         """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}) into the JSON action."""
@@ -343,19 +350,81 @@ def build_graph(ctx: Context) -> Graph:
         _append_jsonl(run.transcript, {"event": "final_checks", "ok": all(r["ok"] for r in results),
                                        "count": len(seen)})
 
+    def judge(s: BuildState) -> None:
+        run = open_run(Path(s.run_dir))
+        s.plan, s.spec = load_plan(run.dir, load_limit)
+        evidence = {
+            "request": s.request,
+            "spec": (s.spec or "").strip(),
+            "tasks": tasks_evidence(s.plan),
+            "final_checks": final_checks_evidence(s.final_checks),
+            "files": workspace_contents(run.workspace, file_chars=cfg_judge.get("file_chars", 12000),
+                                        total_chars=cfg_judge.get("evidence_chars", 60000)),
+        }
+        ctx.say(f"[judge] reviewing the project (round {s.revisions + 1}) …")
+        v = make_verdict(ctx.model, P, evidence, max_attempts=cfg_judge.get("max_attempts", 2),
+                         log=lambda e: _append_jsonl(run.dir / "judge.jsonl", {"round": s.revisions, **e}))
+        v = apply_rules(v, s.plan, s.final_checks, revisions_used=s.revisions, max_revisions=max_revisions)
+        v["round"] = s.revisions
+        s.verdicts.append(v)
+        met = sum(1 for r in v["requirements"] if r["met"])
+        ctx.say(f"[judge] {v['verdict']}  ({met}/{len(v['requirements'])} requirements met)")
+        for o in v["overrides"]:
+            ctx.say(f"[judge] harness override: {o['from']} → {o['to']} ({o['reason']})")
+
+    def revise(s: BuildState) -> None:
+        run = open_run(Path(s.run_dir))
+        verdict = s.verdicts[-1]
+        round_no = s.revisions + 1
+        ctx.say(f"[revise] round {round_no}: planning changes …")
+        try:
+            new_plan, record = revise_plan(
+                ctx.model, P, request=s.request, plan=s.plan, spec=s.spec or "",
+                plan_status=plan_status(s.plan), verdict=verdict, files=_files_listing(run.workspace),
+                round_no=round_no, max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
+                log=lambda e: _append_jsonl(run.dir / "planner.jsonl", e))
+        except PlanError as e:
+            verdict["overrides"].append({"from": "revise", "to": "escalate", "reason": f"revision failed: {e}"})
+            verdict["verdict"] = "escalate"
+            ctx.say(f"[revise] failed → escalate ({e})")
+            return
+        s.revisions = round_no
+        s.plan, s.final_checks = new_plan, None
+        _save_plan_json(run.dir, new_plan)
+        with open(run.dir / "SPEC.md", "a", encoding="utf-8") as f:
+            f.write("\n" + revision_section(record, verdict, new_plan))
+        s.spec = (run.dir / "SPEC.md").read_text(encoding="utf-8")
+        _append_jsonl(run.transcript, {"event": "revision", **record})
+        ctx.say(f"[revise] {record['changes'] or 'plan updated'} — retry: {', '.join(record['retry']) or 'none'}; "
+                f"new: {', '.join(record['added']) or 'none'}")
+
     def finish(s: BuildState) -> None:
         run = open_run(Path(s.run_dir))
         if s.plan is not None and s.status != "plan_failed":
             s.plan, _ = load_plan(run.dir, load_limit)
             all_done = all(t["status"] == "done" for t in s.plan["tasks"])
             regressions = [c for c in (s.final_checks or []) if not c["ok"]]
-            s.status = "finished" if all_done and not regressions else "partial"
+            if s.verdicts:
+                s.status = "accepted" if s.verdicts[-1]["verdict"] == "accept" else "escalated"
+            else:
+                s.status = "finished" if all_done and not regressions else "partial"
             s.summary = aggregate(run, s.plan, s.status)
             s.summary["verified"] = True
             s.summary["final_checks"] = s.final_checks or []
             if regressions:
                 note = "; ".join(f"regression in {c['task']}: {_describe_check(c)}" for c in regressions)
                 s.summary["error"] = "; ".join(x for x in [s.summary["error"], note] if x)
+            if s.verdicts:
+                s.summary["verdict"] = s.verdicts[-1]
+                s.summary["revisions"] = s.revisions
+                readme = run.workspace / "README.md"
+                report = render_report(
+                    request=s.request, run_id=s.run_id, status=s.status, verdict=s.verdicts[-1], plan=s.plan,
+                    final_checks=s.final_checks, files=s.summary["files"],
+                    readme=readme.read_text(encoding="utf-8", errors="replace") if readme.is_file() else None,
+                    revisions=s.revisions)
+                (run.dir / "REPORT.md").write_text(report, encoding="utf-8")
+                s.summary["report"] = str(run.dir / "REPORT.md")
             s.error = s.summary["error"]
         elif s.summary is None:     # ended before building (plan_failed)
             s.summary = {"id": s.run_id, "status": s.status, "error": s.error, "plan": _plan_info(s.plan)}
@@ -370,10 +439,14 @@ def build_graph(ctx: Context) -> Graph:
         task = next(t for t in s.plan["tasks"] if t["id"] == s.current_task)
         return "run_task" if task.get("fix_pending") else "next_task"
 
+    def after_final_check(s: BuildState) -> str:
+        return "judge" if s.options.get("judge", True) else "finish"
+
     g = Graph(entry="intake")
     for name, fn in [("intake", intake), ("plan", plan), ("build", build),
                      ("next_task", next_task), ("run_task", run_task), ("verify", verify),
-                     ("final_check", final_check), ("finish", finish)]:
+                     ("final_check", final_check), ("judge", judge), ("revise", revise),
+                     ("finish", finish)]:
         g.node(name, fn)
     g.edge("intake", "plan")
     g.branch("plan", after_plan, {"build", "next_task", "finish"})
@@ -382,7 +455,11 @@ def build_graph(ctx: Context) -> Graph:
              {"run_task", "final_check"})
     g.edge("run_task", "verify")
     g.branch("verify", after_verify, {"run_task", "next_task"})
-    g.edge("final_check", "finish")
+    g.branch("final_check", after_final_check, {"judge", "finish"})
+    g.branch("judge", lambda s: "revise" if s.verdicts[-1]["verdict"] == "revise" else "finish",
+             {"revise", "finish"})
+    g.branch("revise", lambda s: "next_task" if s.verdicts[-1]["verdict"] == "revise" else "finish",
+             {"next_task", "finish"})
     g.edge("finish", END)
     return g
 
@@ -405,6 +482,7 @@ def run_pipeline(
     review: bool = False,
     no_plan: bool = False,
     max_iterations: int | None = None,
+    judge: bool | None = None,
     on_enter: Callable[[str, BuildState], None] | None = None,
 ) -> dict:
     """Start a new build, or resume one from its state.json."""
@@ -418,19 +496,24 @@ def run_pipeline(
             raise PlanError(f"{state.run_dir} has already been built (status: {state.status}); "
                             "start a new run instead")
         state.options["review"] = review
+        if judge is not None:
+            state.options["judge"] = judge
         if max_iterations:
             state.options["max_iterations"] = max_iterations
         ctx.say(f"[run] {state.run_dir}  (resuming at '{start}')")
     else:
+        judge_on = ctx.config.get("judge", {}).get("enabled", True) if judge is None else judge
         state = BuildState(request=request, options={"review": review, "no_plan": no_plan,
-                                                     "max_iterations": max_iterations})
+                                                     "max_iterations": max_iterations, "judge": judge_on})
         start = None
 
     graph = build_graph(ctx)
-    # per task: next_task + run_task + verify, plus (run_task + verify) per fix attempt
+    # per task: next_task + run_task + verify, plus (run_task + verify) per fix attempt;
+    # up to 2 × max_tasks after revisions, and one full pass per revision round
     max_tasks = ctx.config.get("plan", {}).get("max_tasks", 12)
     max_fix = ctx.config.get("verify", {}).get("max_fix_attempts", 2)
-    max_steps = 10 + max_tasks * (3 + 2 * max_fix)
+    rounds = ctx.config.get("judge", {}).get("max_revisions", 2) + 1
+    max_steps = rounds * (10 + 2 * max_tasks * (3 + 2 * max_fix))
     try:
         state = graph.run(state, start=start, checkpoint=save_state, on_enter=on_enter, max_steps=max_steps,
                           interrupt_before={"build", "next_task"} if review else set())

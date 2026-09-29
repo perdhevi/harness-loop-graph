@@ -24,6 +24,8 @@ class BuildState:
     next: str | None = None
     history: list[str] = field(default_factory=list)
     final_checks: list | None = None
+    verdicts: list = field(default_factory=list)     # Stage 10: every judge verdict, in order
+    revisions: int = 0
     summary: dict | None = None
     error: str | None = None
     updated_at: str | None = None

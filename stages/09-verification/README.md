@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Stage 08: Task-by-task execution](../../stages/08-task-execution/README.md) · [Index](../../README.md) · Stage 10: Judge: does it match the request? →
+[← Stage 08: Task-by-task execution](../../stages/08-task-execution/README.md) · [Index](../../README.md) · [Stage 10: Judge: does it match the request? →](../../stages/10-judge/README.md)
 
 ## Goal
 
@@ -150,4 +150,4 @@ Deciding whether the app matches the *request* (Stage 10, the judge). Stricter c
 
 ---
 
-[← Stage 08: Task-by-task execution](../../stages/08-task-execution/README.md) · [Index](../../README.md) · Stage 10: Judge: does it match the request? →
+[← Stage 08: Task-by-task execution](../../stages/08-task-execution/README.md) · [Index](../../README.md) · [Stage 10: Judge: does it match the request? →](../../stages/10-judge/README.md)

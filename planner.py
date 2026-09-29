@@ -289,3 +289,97 @@ def load_plan(run_dir: Path, max_tasks: int = 15) -> tuple[dict, str]:
     plan["clarifications"] = clar
     spec = spec_file.read_text(encoding="utf-8") if spec_file.exists() else ""
     return plan, spec
+
+
+# ---------------------------------------------------------------- Stage 10: revise
+
+RESETTABLE = {"failed", "blocked"}
+
+
+def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
+    """Merge a reviser reply into a copy of the plan. Returns (merged object, problems)."""
+    errors = []
+    by_id = {t["id"]: t for t in plan["tasks"]}
+    retry = obj.get("retry", []) or []
+    new_tasks = obj.get("tasks", []) or []
+    if not isinstance(retry, list) or not all(isinstance(x, str) for x in retry):
+        errors.append("'retry' must be a list of task ids")
+        retry = []
+    if not isinstance(new_tasks, list):
+        errors.append("'tasks' must be a list")
+        new_tasks = []
+    if not retry and not new_tasks:
+        errors.append("change something: list task ids under 'retry' and/or new tasks under 'tasks'")
+    for tid in retry:
+        if tid not in by_id:
+            errors.append(f"retry: unknown task '{tid}'")
+        elif by_id[tid]["status"] not in RESETTABLE:
+            errors.append(f"retry: task '{tid}' is {by_id[tid]['status']}; only failed or blocked tasks can be retried "
+                          "(add a new task to change finished work)")
+    merged = json.loads(json.dumps(plan))           # deep copy
+    for t in merged["tasks"]:
+        if t["id"] in retry or (retry and t["status"] == "blocked"):
+            t["status"] = "pending"
+            t["fix_attempts"] = 0
+            t["verified"] = False
+            for k in ("fix_pending", "error"):
+                t.pop(k, None)
+            t["attempt_open"] = False
+    for t in new_tasks:
+        if isinstance(t, dict):
+            t = {**t, "status": "pending"}
+        merged["tasks"].append(t)
+    return merged, errors
+
+
+def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spec: str, plan_status: str,
+                verdict: dict, files: str, round_no: int, max_attempts: int = 3, max_tasks: int = 15,
+                log: Callable[[dict], None] | None = None) -> tuple[dict, dict]:
+    """Turn judge feedback into plan changes. Returns (new plan, change record)."""
+    message = (prompts["revise_request"]
+               .replace("{request}", request).replace("{spec}", spec.strip())
+               .replace("{plan_status}", plan_status)
+               .replace("{feedback}", verdict.get("feedback") or "(none)")
+               .replace("{problems}", "\n".join(f"- {p}" for p in verdict.get("problems", [])) or "(none)")
+               .replace("{files}", files).replace("{prefix}", f"R{round_no}-"))
+    messages = [{"role": "user", "content": message}]
+    errors: list[str] = []
+    for attempt in range(1, max_attempts + 1):
+        raw = model.complete(prompts["revise_system"], messages)
+        messages.append({"role": "assistant", "content": raw if raw.strip() else "(empty reply)"})
+        try:
+            obj = _parse(raw)
+        except ParseError as e:
+            errors = [f"no JSON object in the reply ({e})"]
+        else:
+            merged, errors = _apply_revision(plan, obj)
+            if not errors:
+                new_plan, errors = validate_plan(merged, max_tasks * 2)
+                if not errors:
+                    new_plan["clarifications"] = plan.get("clarifications", [])
+                    known = {t["id"] for t in plan["tasks"]}
+                    record = {"round": round_no, "changes": str(obj.get("changes", "")),
+                              "retry": list(obj.get("retry") or []),
+                              "added": [t["id"] for t in new_plan["tasks"] if t["id"] not in known]}
+                    if log:
+                        log({"revision": round_no, "attempt": attempt, "raw": raw, "ok": True})
+                    return new_plan, record
+        if log:
+            log({"revision": round_no, "attempt": attempt, "raw": raw, "errors": errors})
+        messages.append({"role": "user", "content": prompts["planner_fix"].replace(
+            "{errors}", "\n".join(f"- {e}" for e in errors))})
+    raise PlanError(f"no valid revision after {max_attempts} attempts: " + "; ".join(errors))
+
+
+def revision_section(record: dict, verdict: dict, plan: dict) -> str:
+    added = [t for t in plan["tasks"] if t["id"] in record["added"]]
+    lines = [f"## Revision {record['round']}", "", f"**Why:** {verdict.get('feedback', '').strip()}", "",
+             f"**Changes:** {record['changes'] or '(not described)'}", ""]
+    if record["retry"]:
+        lines += [f"**Retried:** {', '.join(record['retry'])}", ""]
+    if added:
+        lines += ["| ID | Task | Depends on | Done when |", "|---|---|---|---|"]
+        for t in added:
+            lines.append(f"| {t['id']} | {t['title']} | {', '.join(t['depends_on']) or '—'} | {_done_when(t['done_when'])} |")
+        lines.append("")
+    return "\n".join(lines) + "\n"

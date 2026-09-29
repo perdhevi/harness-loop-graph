@@ -127,7 +127,7 @@ class PipelineTests(unittest.TestCase):
 
     def build(self, *a, **kw):
         with contextlib.redirect_stdout(io.StringIO()):
-            return main.run_build(*a, verbose_graph=False, **kw)
+            return main.run_build(*a, verbose_graph=False, **{"judge": False, **kw})   # judge: see test_judge.py
 
     def only_run(self) -> Path:
         runs = list((Path(self.tmp.name) / "runs").iterdir())

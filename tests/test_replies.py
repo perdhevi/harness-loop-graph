@@ -144,7 +144,7 @@ class GemmaBuildTests(unittest.TestCase):
         replies += [gemma("write_file", path="greet.py", content="x")] * 6      # spare replies if nothing parses
         with mock.patch.object(main, "ROOT", self.root), mock.patch.object(main, "CONFIG_PATH", self.root / "config.json"), \
                 contextlib.redirect_stdout(io.StringIO()):
-            return main.run_build("greeter", model=FakeModel(replies), verbose_graph=False)
+            return main.run_build("greeter", model=FakeModel(replies), verbose_graph=False, judge=False)
 
     def test_gemma_style_model_creates_files(self):
         s = self.build()

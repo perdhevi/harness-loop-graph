@@ -100,7 +100,7 @@ class VerifyFlowTests(unittest.TestCase):
 
     def build(self, *a, **kw):
         with contextlib.redirect_stdout(io.StringIO()):
-            return main.run_build(*a, verbose_graph=False, **kw)
+            return main.run_build(*a, verbose_graph=False, **{"judge": False, **kw})   # judge: see test_judge.py
 
     def plan_of(self, s):
         return {t["id"]: t for t in json.loads((Path(s["run_dir"]) / "plan.json").read_text())["tasks"]}

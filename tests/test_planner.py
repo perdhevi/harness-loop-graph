@@ -175,6 +175,8 @@ class BuildFlowTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def quiet(self, fn, *a, **kw):
+        if fn is main.run_build:
+            kw.setdefault("judge", False)        # Stage 6–9 behaviour; the judge has its own tests
         with contextlib.redirect_stdout(io.StringIO()):
             return fn(*a, **kw)
 

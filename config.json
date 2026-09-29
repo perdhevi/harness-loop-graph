@@ -40,6 +40,13 @@
     "timeout_s": 120,
     "output_chars": 3000
   },
+  "judge": {
+    "enabled": true,
+    "max_revisions": 2,
+    "max_attempts": 2,
+    "evidence_chars": 60000,
+    "file_chars": 12000
+  },
   "replies": {
     "normalize": true
   }

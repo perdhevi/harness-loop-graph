@@ -22,7 +22,7 @@ python main.py "What is (17 * 23) + 4, and is it prime?"
 export ANTHROPIC_API_KEY=...
 
 # Then read the result
-cat runs/<id>/summary.json
+cat runs/<id>/REPORT.md
 
 # Tests (no model needed)
 python -m unittest discover -s tests -v
@@ -55,8 +55,18 @@ Build these in order.
 | 07 | [Graph & state](stages/07-graph-state/README.md) | Define one typed state object and wire the steps as a graph: intake → plan → build → finish | ✅ done |
 | 08 | [Task-by-task execution](stages/08-task-execution/README.md) | Execute the plan one task at a time, each in its own ReAct loop with a fresh, task-scoped conversation | ✅ done |
 | 09 | [Verification & fix loop](stages/09-verification/README.md) | After each task — and at the end — run real checks (tests, build, lint, smoke run) and feed failures back into the task until it passes or runs out of attempts | ✅ done |
-| 10 | Judge: does it match the request? | Add a separate LLM pass that compares the finished project against the request and spec, and decides what happens next | ⬜ planned |
+| 10 | [Judge: does it match the request?](stages/10-judge/README.md) | Add a separate LLM pass that compares the finished project against the request and spec, and decides what happens next | ✅ done |
 
+### What a build looks like at the end of Part 1 ✅
+
+Part 1 is complete: `python main.py build "<request>"` plans, builds task by task, checks every task, has the result judged against the request, revises if needed, and writes `runs/<id>/REPORT.md`.
+
+```
+request ─▶ intake ─▶ plan ─▶ task ─▶ verify ─▶ (next task … ) ─▶ judge ─┬─ accept   → app + README
+                      │        ▲        │                                ├─ revise   → back to plan
+                      │        └─ fix ◀─┘ (failed check, bounded)       └─ escalate → report to human
+                 SPEC.md + plan.json
+```
 
 ## Part 2 — Reference chapters
 

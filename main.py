@@ -1,7 +1,7 @@
 """harness-loop-graph — command line entry point.
 
-Stage 9: `build` runs as a graph — intake → plan → (next_task → run_task → verify) → final_check
-→ finish. The harness runs every task's done-when check itself and sends failures back to be fixed.
+Stage 10: `build` runs as a graph — intake → plan → (next_task → run_task → verify) → final_check
+→ judge → (revise → …) → finish. A separate judge compares the result with the request.
 
 Usage:
     python main.py build "Build a Python CLI to-do app with add/list/done and pytest tests"
@@ -10,6 +10,7 @@ Usage:
     python main.py build --from-run runs/<id>     # build from a reviewed (maybe edited) plan
     python main.py build --resume runs/<id>       # continue a run that was stopped or crashed
     python main.py build --no-plan "..."          # Stage 5 behaviour
+    python main.py build --no-judge "..."         # Stage 9 behaviour (checks, no judge)
     python main.py build --max-iterations 60 "..."
     python main.py doctor                          # check settings, workspace server, model and reply format
 
@@ -117,7 +118,7 @@ def check_context_settings(config: dict, say=print) -> list[str]:
 
 def run_build(request: str | None, max_iterations: int | None = None, *, model=None,
               ask=None, review: bool = False, from_run: str | None = None, no_plan: bool = False,
-              verbose_graph: bool = True) -> dict:
+              judge: bool | None = None, verbose_graph: bool = True) -> dict:
     """Plan and build through the graph. `from_run` resumes a paused or stopped run."""
     config = load_json(CONFIG_PATH)
     check_context_settings(config)
@@ -134,7 +135,7 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
     )
     on_enter = (lambda name, state: print(f"[graph] → {name}")) if verbose_graph else None
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
-                        max_iterations=max_iterations, on_enter=on_enter)
+                        max_iterations=max_iterations, judge=judge, on_enter=on_enter)
 
 
 def print_summary(s: dict) -> None:
@@ -157,6 +158,18 @@ def print_summary(s: dict) -> None:
         print(f"Stopped with an error: {s['error']}")
     elif s["status"] == "partial":
         print("Some tasks did not finish (see below).")
+    if s.get("verdict"):
+        v = s["verdict"]
+        met = sum(1 for r in v["requirements"] if r["met"])
+        print(f"judge    : {v['verdict']} — {met}/{len(v['requirements'])} requirements met"
+              f"  (revision rounds: {s.get('revisions', 0)})")
+        for r in v["requirements"]:
+            if not r["met"]:
+                print(f"   ✗ {r['requirement']}")
+        for o in v.get("overrides", []):
+            print(f"   override: {o['from']} → {o['to']} ({o['reason']})")
+        if v.get("summary"):
+            print(f"   {v['summary']}")
     if s.get("plan"):
         print(f"plan     : {s['plan']['title']} ({s['plan']['tasks']} tasks)")
     for t in s.get("tasks", []):
@@ -168,8 +181,10 @@ def print_summary(s: dict) -> None:
         for c in s["final_checks"]:
             shown.setdefault((c["kind"], c["target"]), c)
         print("final    : " + "  ".join(f"{'✓' if c['ok'] else '✗'} {t}" for (_, t), c in shown.items()))
-    if s.get("verified"):
-        how = "each task's check run by the harness"
+    if s.get("verdict"):
+        how = "checks run by the harness, result reviewed by the judge"
+    elif s.get("verified"):
+        how = "each task's check run by the harness; no judge"
     else:
         how = "NOT verified (no plan, no checks)"
     print(f"status   : {s['status']}  ({how})")
@@ -181,6 +196,8 @@ def print_summary(s: dict) -> None:
     print(f"size     : ~{s['approx_tokens_in']:,} tokens in / ~{s['approx_tokens_out']:,} out (chars ÷ 4)")
     print(f"time     : {s['duration_s']}s")
     print(f"run      : {s['run_dir']}")
+    if s.get("report"):
+        print(f"report   : {s['report']}")
 
 
 # ---------------------------------------------------------------- CLI
@@ -194,6 +211,7 @@ def main_build(argv: list[str]) -> int:
     parser.add_argument("--from-run", metavar="RUN_DIR", help="build from a reviewed plan in this run folder")
     parser.add_argument("--no-plan", action="store_true", help="skip planning (Stage 5 behaviour)")
     parser.add_argument("--resume", metavar="RUN_DIR", help="continue a run that was stopped or crashed")
+    parser.add_argument("--no-judge", action="store_true", help="skip the judge (Stage 9 behaviour)")
     args = parser.parse_args(argv)
     if args.review and args.no_plan:
         parser.error("--review needs a plan; drop --no-plan")
@@ -211,7 +229,8 @@ def main_build(argv: list[str]) -> int:
     try:
         summary = run_build(request, args.max_iterations,
                             ask=ask_in_terminal if interactive else None,
-                            review=args.review, from_run=args.from_run, no_plan=args.no_plan)
+                            review=args.review, from_run=args.from_run, no_plan=args.no_plan,
+                            judge=False if args.no_judge else None)
     except RunStopped as e:
         what = "interrupted" if isinstance(e.cause, KeyboardInterrupt) else f"stopped: {type(e.cause).__name__}: {e}"
         print(f"\n[{what}]")
@@ -222,7 +241,8 @@ def main_build(argv: list[str]) -> int:
         print(f"[error] {e}")
         return 1
     print_summary(summary)
-    return {"finished": 0, "planned": 0, "max_iterations": 2, "partial": 2}.get(summary["status"], 1)
+    return {"accepted": 0, "finished": 0, "planned": 0, "max_iterations": 2, "partial": 2,
+            "escalated": 3}.get(summary["status"], 1)
 
 
 def _safe_console() -> None:
