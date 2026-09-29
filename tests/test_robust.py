@@ -78,6 +78,21 @@ class FinishTests(unittest.TestCase):
         out, _ = normalize_reply('{"action": "finish", "args": {"summary": "ok"}}')
         self.assertEqual(parse_action(out)["final"], "ok")
 
+    def test_final_called_in_other_formats(self):
+        q = '<|"|>'
+        cases = {
+            "gemma-call+final-action": f"<|tool_call>call:final{{final:{q}Task R6-1 is complete.{q}}}<tool_call|>",
+            "qwen-xml+final-action": "<tool_call><function=final><parameter=final>Task R6-1 is complete."
+                                     "</parameter></function></tool_call>",
+            "json-alias+final-action": '{"name": "finish", "arguments": {"answer": "Task R6-1 is complete."}}',
+        }
+        for how, text in cases.items():
+            with self.subTest(how=how):
+                out, got = normalize_reply(text)
+                self.assertEqual((got, parse_action(out)["final"]), (how, "Task R6-1 is complete."))
+        out, how = normalize_reply(f"call:write_file{{path:{q}a.py{q},content:{q}x{q}}}")
+        self.assertEqual((how, parse_action(out)["action"]), ("gemma-call", "write_file"))   # other calls unchanged
+
     def test_loop_ends_instead_of_calling_a_tool_named_final(self):
         reg = ToolRegistry()
         r = run_loop(NormalizingModel(FakeModel([FINAL_AS_TOOL])), "{tools}", "do R6-1", reg, max_iterations=3)

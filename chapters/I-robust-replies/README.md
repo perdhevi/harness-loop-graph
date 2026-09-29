@@ -23,7 +23,7 @@ A real run on a to-do CLI:
 | What the log showed | Cause | Fix in this chapter |
 |---|---|---|
 | Round 6: `no JSON object found` three times with the **same** reply | `"done_when": {"python -c …"}` (a value with no key) made the whole reply invalid, and the error didn't say where | Keyless `done_when` is repaired to `{"command": …}`; any other JSON error says *line, column and a snippet with ⟨here⟩* |
-| R6-1: `ran out of steps`, `"final": 16` in `tool_calls`, looked stuck 0.95 | The model finished with `{"action": "final", "args": {"final": …}}`, a call to a tool that doesn't exist | `action: final/finish/answer/done` is read as a final answer (`final-action` in the trace); calling `final` as a tool explains how to finish |
+| R6-1: `ran out of steps`, `"final": 16` in `tool_calls`, looked stuck 0.95 | The model finished with `{"action": "final", "args": {"final": …}}`, a call to a tool that doesn't exist | A call to `final/finish/answer/done` is read as a final answer, in every format: the JSON action, Gemma's `call:final{…}`, Qwen's `<function=final>` and JSON aliases (`final-action` in the trace); calling `final` as a tool explains how to finish |
 | `edit_file` ×4 with the same `old` | `old` didn't match the file, and the error gave no clue | "not found" shows the closest lines with line numbers, and says when only whitespace differs |
 | Checks like `python todo_cli.py list > /dev/null && echo ok` accepted | Commands run without a shell, so these can never pass | New plans and revisions reject `&&`, `\|\|`, `\|`, `>`, `<`, `;` (plans already saved still load) |
 | `retry: unknown task 'R1-1'`, three attempts wasted | New task ids listed under `retry` too | They're dropped from `retry`; the reviser is told which tasks it can retry |
@@ -59,7 +59,7 @@ Nothing to switch on. To see the conversions in a run:
 
 ```bash
 python main.py trace runs/<id>           # normalized×N (final-action, …) per task
-python -m unittest discover -s tests -v   # 236 tests, no model needed
+python -m unittest discover -s tests -v   # 237 tests, no model needed
 ```
 
 ## Commit

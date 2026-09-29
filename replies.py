@@ -234,15 +234,23 @@ def normalize_reply(text: str) -> tuple[str, str | None]:
             return text, None                                # canonical: leave it exactly as it was
         converted = _from_json(obj)
         if converted:
-            return json.dumps(converted, ensure_ascii=False), "json-alias"
+            return _finish(converted, "json-alias")
         break
     q = _qwen_xml(cleaned)
     if q:
-        return json.dumps(q, ensure_ascii=False), "qwen-xml"
+        return _finish(q, "qwen-xml")
     g = _gemma(cleaned)
     if g:
-        return json.dumps(g, ensure_ascii=False), "gemma-call"
+        return _finish(g, "gemma-call")
     return text, None
+
+
+def _finish(converted: dict, how: str) -> tuple[str, str]:
+    """A call to "final" in any format (e.g. Gemma's call:final{…}) is a final answer too."""
+    final = _final_action(converted)
+    if final is not None:
+        return json.dumps(final, ensure_ascii=False), f"{how}+final-action"
+    return json.dumps(converted, ensure_ascii=False), how
 
 
 class NormalizingModel:
