@@ -36,6 +36,7 @@ from pathlib import Path
 
 from loop import Step, run_loop
 from model_adapter import ModelError, make_adapter
+from models import describe_roles, make_role_models, ollama_models, role_settings
 from pipeline import Context, RunStopped, run_pipeline
 from tracing import NullTracer, Tracer
 from memory import LessonStore
@@ -79,7 +80,7 @@ def run_once(prompt: str) -> str:
 def run_react(request: str, workspace: Path, max_iterations: int | None = None):
     config = load_json(CONFIG_PATH)
     prompts = load_json(PROMPTS_PATH)
-    model = make_adapter(config)
+    model = make_role_models(config)["task"]
     if config.get("replies", {}).get("normalize", True):
         from replies import NormalizingModel
         model = NormalizingModel(model)
@@ -109,14 +110,15 @@ def ask_in_terminal(questions: list[str]) -> list[str] | None:
 def check_context_settings(config: dict, say=print) -> list[str]:
     """Warn when the harness plans for a bigger window than Ollama will really give the model."""
     warnings = []
-    if config.get("provider") == "ollama":
-        num_ctx = config["providers"]["ollama"].get("num_ctx")
-        window = config.get("context", {}).get("window_tokens", 16000)
+    window = config.get("context", {}).get("window_tokens", 16000)
+    for name, s in ollama_models(config).items():       # every Ollama model any role uses (Chapter H)
+        num_ctx = s.get("num_ctx")
+        who = f"{name} ({', '.join(s['roles'])})"
         if not num_ctx:
-            warnings.append("providers.ollama.num_ctx is not set: Ollama may use 4,096 tokens and silently "
+            warnings.append(f"{who}: num_ctx is not set: Ollama may use 4,096 tokens and silently "
                             "drop the start of long prompts (system prompt, tools, task)")
         elif window > num_ctx:
-            warnings.append(f"context.window_tokens ({window}) is larger than providers.ollama.num_ctx ({num_ctx}): "
+            warnings.append(f"{who}: context.window_tokens ({window}) is larger than num_ctx ({num_ctx}): "
                             "prompts will be cut by Ollama, silently. Make them match.")
     for w in warnings:
         say(f"[warning] {w}")
@@ -143,16 +145,18 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
     config = config or load_json(CONFIG_PATH)
     check_context_settings(config, say=(lambda m: None) if quiet else print)
     prompts = load_json(PROMPTS_PATH)
-    provider = config["provider"]
+    models = make_role_models(config, override=model)
+    task_provider, task_settings = role_settings(config, "task")
     ctx = Context(
-        model=model or make_adapter(config),
+        model=models["task"],
+        models=models,
         config=config,
         prompts={k: prompt_text(prompts, k) for k in prompts},
         runs_dir=ROOT / config.get("build", {}).get("runs_dir", "runs"),
         ask=ask,
         on_step=None if quiet else print_step,
         say=(lambda msg: None) if quiet else print,
-        meta={"provider": provider, "model": config["providers"][provider].get("model")},
+        meta={"provider": task_provider, "model": task_settings.get("model"), "roles": describe_roles(config)},
         tracer=Tracer() if config.get("trace", {}).get("enabled", True) else NullTracer(),
         memory=make_store(config),
     )
@@ -368,7 +372,11 @@ def main_bench(argv: list[str]) -> int:
         config["provider"] = args.provider
     if args.model:
         config["providers"][config["provider"]]["model"] = args.model
-    label = safe_label(args.label or f"{config['provider']}-{config['providers'][config['provider']].get('model')}")
+    if args.provider or args.model:
+        config["roles"] = {}                     # one model for every role, so results compare cleanly
+    used = sorted(set(describe_roles(config).values()))
+    default_label = used[0].replace("/", "-") if len(used) == 1 else "mix-" + "-".join(u.split("/", 1)[1] for u in used)
+    label = safe_label(args.label or default_label)
     try:
         suite = load_suite(args.suite)
     except (SuiteError, OSError, ValueError) as e:
@@ -417,8 +425,6 @@ def main_doctor(argv: list[str]) -> int:
     parser.add_argument("--skip-model", action="store_true", help="don't call the model")
     args = parser.parse_args(argv)
     config = load_json(CONFIG_PATH)
-    provider = config["provider"]
-    pcfg = config["providers"][provider]
     ok = True
 
     def report(good: bool, what: str, hint: str = "") -> None:
@@ -427,7 +433,8 @@ def main_doctor(argv: list[str]) -> int:
         print(f"  {'✓' if good else '✗'} {what}" + (f"\n      → {hint}" if hint and not good else ""))
 
     print(f"python   {sys.version.split()[0]} on {sys.platform} · encoding stdout={sys.stdout.encoding}")
-    print(f"provider {provider} · model {pcfg.get('model')}")
+    for role, name in describe_roles(config).items():
+        print(f"{role:<9} {name}")
     print("settings")
     warnings = check_context_settings(config, say=lambda m: None)
     report(not warnings, "context window matches what the model is given", "; ".join(warnings))
@@ -447,28 +454,33 @@ def main_doctor(argv: list[str]) -> int:
         except Exception as e:
             report(False, "starts", f"{type(e).__name__}: {e}")
 
-    if provider == "ollama":
+    used = ollama_models(config)
+    if used:
         print("ollama")
-        base = pcfg["base_url"].rstrip("/")
-        try:
-            with urllib.request.urlopen(f"{base}/api/tags", timeout=5) as r:
-                names = [m["name"] for m in json.loads(r.read())["models"]]
-            report(True, f"reachable at {base}")
-            want = pcfg["model"]
-            report(want in names or f"{want}:latest" in names, f"model {want} is pulled",
-                   f"run: ollama pull {want}   (found: {', '.join(names[:8]) or 'none'})")
-        except Exception as e:
-            report(False, f"reachable at {base}", f"{e} — is `ollama serve` running?")
+        bases = {m["base_url"].rstrip("/") for m in used.values()}
+        for base in sorted(bases):
+            try:
+                with urllib.request.urlopen(f"{base}/api/tags", timeout=5) as r:
+                    names = [m["name"] for m in json.loads(r.read())["models"]]
+                report(True, f"reachable at {base}")
+            except Exception as e:
+                report(False, f"reachable at {base}", f"{e} — is `ollama serve` running?")
+                continue
+            for want, m in used.items():
+                if m["base_url"].rstrip("/") != base:
+                    continue
+                report(want in names or f"{want}:latest" in names, f"model {want} is pulled ({', '.join(m['roles'])})",
+                       f"run: ollama pull {want}   (found: {', '.join(names[:8]) or 'none'})")
 
     if not args.skip_model and ok:
-        print("model reply format")
+        print(f"model reply format (task model: {describe_roles(config)['task']})")
         prompts = load_json(PROMPTS_PATH)
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
             tools = build_registry(config, Path(tmp), stack)
             system = prompt_text(prompts, "react_system").replace("{tools}", tools.describe())
             t0 = time.perf_counter()
             try:
-                reply = make_adapter(config).complete(system, [{"role": "user", "content":
+                reply = make_role_models(config)["task"].complete(system, [{"role": "user", "content":
                         "Create a file hello.txt containing the word hi. Use the right tool."}])
             except ModelError as e:
                 report(False, "model answers", str(e))

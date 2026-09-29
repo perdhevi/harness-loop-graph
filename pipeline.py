@@ -11,7 +11,7 @@ Stage 9:  run_task → verify: the harness runs each task's done_when itself;
 Stage 10: final_check → judge: a separate model call compares the project with
           the request; revise sends feedback back through the planner,
           escalate hands a REPORT.md to a human.
-Chapter G (--fix): a finished run re-enters at revise with a person's feedback in place
+Chapter H (--fix): a finished run re-enters at revise with a person's feedback in place
           of a judge verdict, then goes through tasks, checks and the judge again.
 """
 
@@ -63,7 +63,11 @@ class Context:
     stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
     tracer: object = field(default_factory=NullTracer)      # Chapter A
     memory: object = None                                   # Chapter B: LessonStore, or None when off
+    models: dict = field(default_factory=dict)               # Chapter H: role → model; missing roles use `model`
     _registry: object = None
+
+    def model_for(self, role: str):
+        return self.models.get(role) or self.model
 
     def registry(self, workspace: Path):
         """One set of MCP servers per run, shared by every task."""
@@ -223,11 +227,11 @@ def build_graph(ctx: Context) -> Graph:
 
     def loop_model(label: str):
         """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}), then compact (Chapter D)."""
-        base = ctx.model
+        base = ctx.model_for("task")
         if ctx.config.get("replies", {}).get("normalize", True):
             def on_normalize(how: str, raw: str) -> None:
                 ctx.tracer.event("normalized", format=how, raw=raw[:300])
-            base = NormalizingModel(ctx.model, on_normalize=on_normalize)
+            base = NormalizingModel(base, on_normalize=on_normalize)
         if not cfg_compaction.get("enabled", True):
             return base
 
@@ -241,7 +245,7 @@ def build_graph(ctx: Context) -> Graph:
             target=cfg_compaction.get("target", 0.5), ceiling=cfg_compaction.get("ceiling", 0.95),
             keep_recent_steps=cfg_compaction.get("keep_recent_steps", 2),
             note=P["compact_note"], mode=cfg_compaction.get("mode", "extractive"),
-            summarizer=RoleModel(ctx.model, ctx.tracer, "compactor"), summarizer_system=P["compact_system"],
+            summarizer=RoleModel(ctx.model_for("compactor"), ctx.tracer, "compactor"), summarizer_system=P["compact_system"],
             on_compact=on_compact)
 
     def report_signals(task: dict, sig: dict, phase: str) -> None:
@@ -276,7 +280,7 @@ def build_graph(ctx: Context) -> Graph:
                 ctx.say(f"[memory] {len(lessons)} review lesson(s) from past builds → planner")
         ctx.say("[plan] asking the planner …")
         try:
-            p = make_plan(ctx.model, P, s.request, ask=ctx.ask,
+            p = make_plan(ctx.model_for("planner"), P, s.request, ask=ctx.ask,
                           max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
                           max_questions=cfg_plan.get("max_questions", 3),
                           log=lambda e: _append_jsonl(run_dir / "planner.jsonl", e), notes=notes)
@@ -527,7 +531,7 @@ def build_graph(ctx: Context) -> Graph:
                                         total_chars=cfg_judge.get("evidence_chars", 60000)),
         }
         ctx.say(f"[judge] reviewing the project (round {s.revisions + 1}) …")
-        v = make_verdict(ctx.model, P, evidence, max_attempts=cfg_judge.get("max_attempts", 2),
+        v = make_verdict(ctx.model_for("judge"), P, evidence, max_attempts=cfg_judge.get("max_attempts", 2),
                          log=lambda e: _append_jsonl(run.dir / "judge.jsonl", {"round": s.revisions, **e}))
         v = apply_rules(v, s.plan, s.final_checks, revisions_used=s.revisions - s.revision_base,
                         max_revisions=max_revisions)
@@ -551,7 +555,7 @@ def build_graph(ctx: Context) -> Graph:
         ctx.say(f"[revise] round {round_no}: planning changes …")
         try:
             new_plan, record = revise_plan(
-                ctx.model, P, request=s.request, plan=s.plan, spec=s.spec or "",
+                ctx.model_for("reviser"), P, request=s.request, plan=s.plan, spec=s.spec or "",
                 plan_status=plan_status(s.plan), verdict=verdict, files=_files_listing(run.workspace),
                 round_no=round_no, max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
                 log=lambda e: _append_jsonl(run.dir / "planner.jsonl", e))
@@ -717,7 +721,12 @@ def run_pipeline(
 
     # Chapter A: wrap from outside — the loop, nodes and tools don't know they're traced
     tracer = ctx.tracer
-    ctx.model = tracer.wrap_model(ctx.model)
+    wrapped: dict[int, object] = {}                     # models shared by several roles are wrapped once
+
+    def wrap(m):
+        return wrapped.setdefault(id(m), tracer.wrap_model(m))
+    ctx.model = wrap(ctx.model)
+    ctx.models = {role: wrap(m) for role, m in ctx.models.items()}
     if tracer.enabled:
         user_on_step = ctx.on_step
 

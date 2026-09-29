@@ -92,5 +92,12 @@
   },
   "replies": {
     "normalize": true
+  },
+  "roles": {
+    "planner": {},
+    "task": {},
+    "judge": {},
+    "reviser": {},
+    "compactor": {}
   }
 }

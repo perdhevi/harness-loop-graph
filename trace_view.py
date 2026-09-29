@@ -159,10 +159,12 @@ def render(events: list[dict], *, steps: bool = False) -> str:
         for m in models:
             roles[m["role"]].append(m)
         for role, ms in roles.items():
-            out.append(f"  {role:<8} ×{len(ms):<3} {fmt_ms(sum(m['duration_ms'] for m in ms)):>9}"
+            names = sorted({m["model"] for m in ms if m.get("model")})
+            out.append(f"  {role:<9} ×{len(ms):<3} {fmt_ms(sum(m['duration_ms'] for m in ms)):>9}"
                        f"   ~{fmt_tok(sum(m['approx_tokens_in'] for m in ms))}→"
                        f"{fmt_tok(sum(m['approx_tokens_out'] for m in ms))} tok"
-                       + (f"   {sum(1 for m in ms if m['error'])} errors" if any(m["error"] for m in ms) else ""))
+                       + (f"   {sum(1 for m in ms if m['error'])} errors" if any(m["error"] for m in ms) else "")
+                       + (f"   ({', '.join(names)})" if names else ""))
         out.append("")
 
     slow = sorted(models, key=lambda m: -m["duration_ms"])[:3] + sorted(tools, key=lambda t: -t["duration_ms"])[:3]
@@ -184,6 +186,7 @@ def metrics(events: list[dict]) -> dict:
         calls[m["role"]] += 1
     return {
         "model_calls": dict(calls),
+        "models": {r: sorted({m["model"] for m in models if m["role"] == r and m.get("model")}) for r in calls},
         "tokens_in": sum(m["approx_tokens_in"] for m in models),
         "tokens_out": sum(m["approx_tokens_out"] for m in models),
         "model_errors": sum(1 for m in models if m.get("error")),

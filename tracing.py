@@ -123,7 +123,8 @@ class Tracer(NullTracer):
         self.event("step", n=step.n, action=step.action, parse_error=step.error, final=step.final is not None)
 
     def wrap_model(self, model):
-        return TracingModel(model, self)
+        name = getattr(model, "model", None)             # adapters keep their model name here (Chapter H)
+        return TracingModel(model, self, name if isinstance(name, str) else None)
 
     def wrap_tools(self, tools):
         return TracingTools(tools, self)
@@ -155,9 +156,10 @@ class Tracer(NullTracer):
 
 
 class TracingModel:
-    def __init__(self, model, tracer: Tracer):
+    def __init__(self, model, tracer: Tracer, name: str | None = None):
         self.model = model
         self.tracer = tracer
+        self.name = name
 
     def complete(self, system: str, messages: list[dict]) -> str:
         chars_in = len(system) + sum(len(m.get("content", "")) for m in messages)
@@ -166,12 +168,14 @@ class TracingModel:
         try:
             reply = self.model.complete(system, messages)
         except BaseException as ex:
-            self.tracer.event("model", role=role, duration_ms=round((self.tracer._clock() - start) * 1000, 1),
+            self.tracer.event("model", role=role, model=self.name,
+                              duration_ms=round((self.tracer._clock() - start) * 1000, 1),
                               chars_in=chars_in, chars_out=0, approx_tokens_in=chars_in // 4,
                               approx_tokens_out=0, error=f"{type(ex).__name__}: {ex}")
             raise
         chars_out = len(reply or "")
-        self.tracer.event("model", role=role, duration_ms=round((self.tracer._clock() - start) * 1000, 1),
+        self.tracer.event("model", role=role, model=self.name,
+                          duration_ms=round((self.tracer._clock() - start) * 1000, 1),
                           chars_in=chars_in, chars_out=chars_out, approx_tokens_in=chars_in // 4,
                           approx_tokens_out=chars_out // 4, error=None)
         return reply

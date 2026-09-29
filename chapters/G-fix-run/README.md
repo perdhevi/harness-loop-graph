@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Chapter F: Persistence & benchmark](../../chapters/F-benchmark-regression/README.md) · [Index](../../README.md)
+[← Chapter F: Persistence & benchmark](../../chapters/F-benchmark-regression/README.md) · [Index](../../README.md) · [Chapter H: A model per role →](../../chapters/H-role-models/README.md)
 
 ## Read this when
 
@@ -61,4 +61,4 @@ chapter G: fixing a finished run — build --fix feeds a person's feedback throu
 
 ---
 
-[← Chapter F: Persistence & benchmark](../../chapters/F-benchmark-regression/README.md) · [Index](../../README.md)
+[← Chapter F: Persistence & benchmark](../../chapters/F-benchmark-regression/README.md) · [Index](../../README.md) · [Chapter H: A model per role →](../../chapters/H-role-models/README.md)
