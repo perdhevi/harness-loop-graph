@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model and the real workspace server — confirm with a real model)
 
-[← Stage 04: MCP tools & workspace](../../stages/04-mcp-workspace/README.md) · [Index](../../README.md) · Stage 06: Planner: request → spec → tasks →
+[← Stage 04: MCP tools & workspace](../../stages/04-mcp-workspace/README.md) · [Index](../../README.md) · [Stage 06: Planner: request → spec → tasks →](../../stages/06-planner/README.md)
 
 ## Goal
 
@@ -156,4 +156,4 @@ Planning (Stage 06), resuming a run (Stage 07), verification (Stage 09), and exa
 
 ---
 
-[← Stage 04: MCP tools & workspace](../../stages/04-mcp-workspace/README.md) · [Index](../../README.md) · Stage 06: Planner: request → spec → tasks →
+[← Stage 04: MCP tools & workspace](../../stages/04-mcp-workspace/README.md) · [Index](../../README.md) · [Stage 06: Planner: request → spec → tasks →](../../stages/06-planner/README.md)

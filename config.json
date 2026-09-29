@@ -29,6 +29,11 @@
     "max_iterations": 40,
     "runs_dir": "runs"
   },
+  "plan": {
+    "max_tasks": 12,
+    "max_attempts": 3,
+    "max_questions": 3
+  },
   "replies": {
     "normalize": true
   }

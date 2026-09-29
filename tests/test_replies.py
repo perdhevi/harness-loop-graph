@@ -134,7 +134,11 @@ class GemmaBuildTests(unittest.TestCase):
         config["replies"]["normalize"] = normalize
         config["build"]["max_iterations"] = 4
         (self.root / "config.json").write_text(json.dumps(config))
-        replies = ["I'll create the script.\n" + gemma("write_file", path="greet.py", content="print('Hello — world ✓')\n"),
+        plan = json.dumps({"title": "Greeter", "summary": "s", "tasks": [
+            {"id": "T1", "title": "greet.py", "description": "d", "files": ["greet.py"], "depends_on": [],
+             "done_when": {"command": "python greet.py"}}]})
+        replies = [plan,
+                   "I'll create the script.\n" + gemma("write_file", path="greet.py", content="print('Hello — world ✓')\n"),
                    gemma("run_command", command="python greet.py"),
                    '{"final_answer": "greet.py prints Hello — world ✓"}']
         replies += [gemma("write_file", path="greet.py", content="x")] * 6      # spare replies if nothing parses

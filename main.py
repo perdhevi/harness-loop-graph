@@ -1,10 +1,13 @@
 """harness-loop-graph — command line entry point.
 
-Stage 5: `build` takes a request, creates runs/<id>/ with a fresh workspace, and lets the
-loop build the project end to end. No plan and no checks yet: "finished" means the model said so.
+Stage 6: `build` plans first — request → SPEC.md + plan.json — then builds from the plan.
 
 Usage:
     python main.py build "Build a Python CLI to-do app with add/list/done and pytest tests"
+    python main.py build --yes "..."              # never ask questions; record assumptions
+    python main.py build --review "..."           # plan only, then stop for a human to review
+    python main.py build --from-run runs/<id>     # build from a reviewed (maybe edited) plan
+    python main.py build --no-plan "..."          # Stage 5 behaviour
     python main.py build --max-iterations 60 "..."
     python main.py doctor                          # check settings, workspace server, model and reply format
 
@@ -25,7 +28,8 @@ from pathlib import Path
 
 from loop import Step, run_loop
 from model_adapter import ModelError, make_adapter
-from build import execute_build, start_run
+from build import execute_build, open_run, start_run
+from planner import PlanError, load_plan, make_plan, render_tasks, save_plan
 from replies import NormalizingModel
 from runtime import CONFIG_PATH, PROMPTS_PATH, ROOT, build_registry, load_json, prompt_text
 from tools.mcp_client import McpError
@@ -85,6 +89,14 @@ def run_react(request: str, workspace: Path, max_iterations: int | None = None):
 
 # ---------------------------------------------------------------- Stages 5–6: build mode
 
+def ask_in_terminal(questions: list[str]) -> list[str] | None:
+    print("\nThe planner has questions (press Enter to skip one and let it assume):")
+    answers = []
+    for i, q in enumerate(questions, 1):
+        answers.append(input(f"  {i}. {q}\n     > ").strip() or "(no answer — assume something reasonable)")
+    return answers
+
+
 def check_context_settings(config: dict, say=print) -> list[str]:
     """Warn when the harness plans for a bigger window than Ollama will really give the model."""
     warnings = []
@@ -102,31 +114,85 @@ def check_context_settings(config: dict, say=print) -> list[str]:
     return warnings
 
 
-def run_build(request: str, max_iterations: int | None = None, *, model=None) -> dict:
-    """Straight from request to code: one loop, one fresh workspace, one run folder."""
+def _append_jsonl(path: Path, entry: dict) -> None:
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def run_build(request: str | None, max_iterations: int | None = None, *, model=None,
+              ask=None, review: bool = False, from_run: str | None = None, no_plan: bool = False) -> dict:
+    """Plan, then build. `review` stops after planning; `from_run` builds a reviewed plan."""
     config = load_json(CONFIG_PATH)
     check_context_settings(config)
     prompts = load_json(PROMPTS_PATH)
+    P = {k: prompt_text(prompts, k) for k in prompts}
     provider = config["provider"]
     model = model or make_adapter(config)
-    if config.get("replies", {}).get("normalize", True):
-        model = NormalizingModel(model)
-    run = start_run(ROOT / config.get("build", {}).get("runs_dir", "runs"), request,
-                    meta={"provider": provider, "model": config["providers"][provider].get("model")})
-    print(f"[run] {run.dir}")
+    loop_model = NormalizingModel(model) if config.get("replies", {}).get("normalize", True) else model
+    cfg_plan = config.get("plan", {})
+    max_tasks = cfg_plan.get("max_tasks", 12)
+    plan = None
+
+    if from_run:
+        run = open_run(Path(from_run))
+        if run.summary_file.exists():
+            raise PlanError(f"{run.dir} has already been built; start a new run instead")
+        plan, spec = load_plan(run.dir, max_tasks)                   # picks up a reviewer's edits
+        request = json.loads(run.request_file.read_text(encoding="utf-8"))["request"]
+        print(f"[run] {run.dir}  (building the reviewed plan)")
+    else:
+        run = start_run(ROOT / config.get("build", {}).get("runs_dir", "runs"), request,
+                        meta={"provider": provider, "model": config["providers"][provider].get("model"),
+                              "planned": not no_plan})
+        print(f"[run] {run.dir}")
+        if not no_plan:
+            print("[plan] asking the planner …")
+            try:
+                plan = make_plan(model, P, request, ask=ask,
+                                 max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
+                                 max_questions=cfg_plan.get("max_questions", 3),
+                                 log=lambda e: _append_jsonl(run.dir / "planner.jsonl", e))
+            except PlanError as e:
+                summary = {"id": run.id, "status": "plan_failed", "error": str(e), "plan": None}
+                run.summary_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+                                            encoding="utf-8")
+                return {**summary, "run_dir": str(run.dir)}
+            save_plan(run.dir, plan, request)
+            spec = (run.dir / "SPEC.md").read_text(encoding="utf-8")
+            print(f"[plan] {plan['title']} — {len(plan['tasks'])} tasks")
+            print("\n".join("       " + line for line in render_tasks(plan).splitlines() if line[:1] != " "))
+            if review:
+                return {"id": run.id, "status": "planned", "run_dir": str(run.dir),
+                        "plan": {"title": plan["title"], "tasks": len(plan["tasks"])}}
+
+    if plan is None:
+        first = P["build_request"].replace("{request}", request)
+        plan_info = None
+    else:
+        first = (P["build_with_plan"].replace("{request}", request)
+                 .replace("{spec}", spec.strip()).replace("{tasks}", render_tasks(plan)))
+        plan_info = {"title": plan["title"], "tasks": len(plan["tasks"])}
     with contextlib.ExitStack() as stack:
         summary = execute_build(
-            run, model, build_registry(config, run.workspace, stack),
-            prompt_text(prompts, "react_system") + "\n\n" + prompt_text(prompts, "build_rules"),
-            prompt_text(prompts, "build_request").replace("{request}", request),
+            run, loop_model, build_registry(config, run.workspace, stack),
+            P["react_system"] + "\n\n" + P["build_rules"], first,
             max_iterations=max_iterations or config.get("build", {}).get("max_iterations", 40),
-            format_reminder=prompt_text(prompts, "format_reminder"), on_step=print_step)
+            format_reminder=P["format_reminder"], on_step=print_step, plan_info=plan_info)
     summary["run_dir"] = str(run.dir)
     return summary
 
 
 def print_summary(s: dict) -> None:
     print("═" * 50)
+    if s["status"] == "planned":
+        print(f"Planned: {s['plan']['title']} ({s['plan']['tasks']} tasks). Nothing built yet.")
+        print(f"Review  : {s['run_dir']}/SPEC.md and plan.json (edit either if you like)")
+        print(f"Build   : python main.py build --from-run {s['run_dir']}")
+        return
+    if s["status"] == "plan_failed":
+        print(f"Planning failed: {s['error']}")
+        print(f"Details : {s['run_dir']}/planner.jsonl")
+        return
     if s["answer"]:
         print(s["answer"])
         print("─" * 50)
@@ -136,6 +202,8 @@ def print_summary(s: dict) -> None:
         print(f"Stopped with an error: {s['error']}")
     elif s["status"] == "interrupted":
         print("Interrupted (Ctrl-C). The run folder keeps what was done so far.")
+    if s.get("plan"):
+        print(f"plan     : {s['plan']['title']} ({s['plan']['tasks']} tasks)")
     print(f"status   : {s['status']}  (NOT verified: \"done\" means the model said so)")
     print(f"steps    : {s['steps']}  ·  malformed: {s['malformed']}  ·  model calls: {s['model_calls']}")
     tools = ", ".join(f"{k}×{v}" for k, v in sorted(s["tool_calls"].items())) or "none"
@@ -153,18 +221,30 @@ def main_build(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="main.py build", description="Build a project from a request")
     parser.add_argument("request", nargs="*")
     parser.add_argument("--max-iterations", type=int, default=None)
+    parser.add_argument("--yes", action="store_true", help="never ask questions; the planner records assumptions")
+    parser.add_argument("--review", action="store_true", help="plan only, then stop")
+    parser.add_argument("--from-run", metavar="RUN_DIR", help="build from a reviewed plan in this run folder")
+    parser.add_argument("--no-plan", action="store_true", help="skip planning (Stage 5 behaviour)")
     args = parser.parse_args(argv)
-    request = " ".join(args.request).strip() or input("build request> ").strip()
-    if not request:
-        print("Empty request.")
-        return 1
+    if args.review and args.no_plan:
+        parser.error("--review needs a plan; drop --no-plan")
+
+    request = None
+    if not args.from_run:
+        request = " ".join(args.request).strip() or input("build request> ").strip()
+        if not request:
+            print("Empty request.")
+            return 1
+    interactive = sys.stdin.isatty() and not args.yes
     try:
-        summary = run_build(request, args.max_iterations)
-    except (ModelError, McpError) as e:
+        summary = run_build(request, args.max_iterations,
+                            ask=ask_in_terminal if interactive else None,
+                            review=args.review, from_run=args.from_run, no_plan=args.no_plan)
+    except (ModelError, McpError, PlanError, FileNotFoundError) as e:
         print(f"[error] {e}")
         return 1
     print_summary(summary)
-    return {"finished": 0, "max_iterations": 2}.get(summary["status"], 1)
+    return {"finished": 0, "planned": 0, "max_iterations": 2}.get(summary["status"], 1)
 
 
 def _safe_console() -> None:

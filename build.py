@@ -38,6 +38,15 @@ class Run:
     summary_file: Path
 
 
+def open_run(run_dir: Path) -> Run:
+    """Re-open an existing run folder (e.g. after --review)."""
+    d = Path(run_dir).resolve()
+    if not (d / "request.json").exists():
+        raise FileNotFoundError(f"not a run folder (no request.json): {d}")
+    (d / "workspace").mkdir(exist_ok=True)
+    return Run(d.name, d, d / "workspace", d / "request.json", d / "transcript.jsonl", d / "summary.json")
+
+
 def slugify(text: str, words: int = 6, max_len: int = 40) -> str:
     tokens = re.findall(r"[a-z0-9]+", text.lower())[:words]
     return ("-".join(tokens)[:max_len].strip("-")) or "build"
@@ -97,6 +106,7 @@ def execute_build(
     max_iterations: int,
     format_reminder: str,
     on_step: Callable[[Step], None] | None = None,
+    plan_info: dict | None = None,
 ) -> dict:
     """Run the loop for one build; always writes summary.json, even on error or Ctrl-C."""
     counter = CountingModel(model)
@@ -131,6 +141,7 @@ def execute_build(
     summary = {
         "id": run.id,
         "status": status,
+        "plan": plan_info,
         "answer": result.answer if result else None,
         "error": error,
         "steps": len(steps),

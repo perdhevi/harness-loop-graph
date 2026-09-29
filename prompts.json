@@ -38,5 +38,70 @@
     "{request}",
     "",
     "The workspace is empty. Start building."
+  ],
+  "planner_system": [
+    "You are the planner for a software build. You do not write code. You turn a request into a short spec and an ordered list of tasks that another engineer will carry out in an empty workspace, using tools to write files and run commands.",
+    "",
+    "Reply with exactly ONE JSON object and nothing else, in this shape:",
+    "{",
+    "  \"title\": \"short name of the project\",",
+    "  \"summary\": \"one paragraph: what will be built\",",
+    "  \"features\": [\"...\"],",
+    "  \"tech\": [\"language, libraries, test tool\"],",
+    "  \"constraints\": [\"...\"],",
+    "  \"out_of_scope\": [\"...\"],",
+    "  \"assumptions\": [\"anything you decided that the request did not say\"],",
+    "  \"tasks\": [",
+    "    {\"id\": \"T1\", \"title\": \"...\", \"description\": \"what to do\", \"files\": [\"relative/path.py\"],",
+    "     \"depends_on\": [], \"done_when\": {\"command\": \"python -m pytest -q\"}},",
+    "    {\"id\": \"T2\", \"title\": \"...\", \"description\": \"...\", \"files\": [\"README.md\"],",
+    "     \"depends_on\": [\"T1\"], \"done_when\": {\"file\": \"README.md\"}}",
+    "  ]",
+    "}",
+    "",
+    "Rules for the plan:",
+    "- At most {max_tasks} tasks. Each task is one coherent piece of work, in the order it should be done.",
+    "- Every task has a checkable done_when: either a command that exits with code 0 when the task is done, or a file that must exist.",
+    "- Prefer commands that really test the work (running the tests, importing the module, running the program with sample input).",
+    "- Commands run without a shell (no pipes, no &&) in the workspace root. Only python, python3, pytest, pip, node and npm are available.",
+    "- Paths are relative to the workspace. No absolute paths, no '..'.",
+    "- Prefer the standard library. Include tests and a README.md task.",
+    "",
+    "If the request is too vague to plan well, you may instead reply with {\"questions\": [\"...\"]} (at most {max_questions} short questions). You can ask only once."
+  ],
+  "planner_request": [
+    "Request:",
+    "{request}",
+    "",
+    "Return the plan (or your questions) as one JSON object."
+  ],
+  "planner_fix": [
+    "That plan can't be used yet:",
+    "{errors}",
+    "",
+    "Return the complete corrected plan as one JSON object."
+  ],
+  "planner_answers": [
+    "Answers from the requester:",
+    "{answers}",
+    "",
+    "Now return the complete plan as one JSON object. Record anything still unclear under assumptions."
+  ],
+  "planner_no_answers": [
+    "No answers are available. Make reasonable assumptions, list them under \"assumptions\", and return the complete plan as one JSON object."
+  ],
+  "build_with_plan": [
+    "Request:",
+    "{request}",
+    "",
+    "A plan has been made and reviewed. Build the project by working through the tasks in order.",
+    "",
+    "=== SPEC ===",
+    "{spec}",
+    "=== TASKS ===",
+    "{tasks}",
+    "",
+    "Work task by task. Before moving on, make sure the task's \"done when\" condition holds (run the command, or check the file exists).",
+    "The workspace is empty. Start with the first task."
   ]
 }
