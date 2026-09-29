@@ -35,6 +35,8 @@ from state import BuildState, load_state, save_state
 from tracing import NullTracer
 from replies import NormalizingModel
 from memory import error_signature, project_map, render_fix_lessons, render_review_lessons
+from context import (CHARS_PER_TOKEN, OutputLimiter, Section, allocate, estimate_tokens, rank_files,
+                     relevant_files)
 
 RESUMABLE_ENDED = {"error", "interrupted"}
 FINISHED_TASK = {"done", "failed", "blocked"}
@@ -62,7 +64,11 @@ class Context:
         """One set of MCP servers per run, shared by every task."""
         if self._registry is None:
             tools = build_registry(self.config, workspace, self.stack)
-            self._registry = self.tracer.wrap_tools(tools)
+            cfg = self.config.get("context", {})
+            if cfg.get("enabled", True):                 # Chapter C: long outputs → head + tail + pointer
+                tools = OutputLimiter(tools, Path(workspace).parent / "outputs",
+                                      max_chars=cfg.get("max_observation_chars", 4000))
+            self._registry = self.tracer.wrap_tools(tools)   # trace records what the model actually saw
         return self._registry
 
     def close(self) -> None:
@@ -168,6 +174,7 @@ def build_graph(ctx: Context) -> Graph:
     cfg_verify = ctx.config.get("verify", {})
     cfg_judge = ctx.config.get("judge", {})
     cfg_memory = ctx.config.get("memory", {})
+    cfg_context = ctx.config.get("context", {})
     P = ctx.prompts
     max_tasks = cfg_plan.get("max_tasks", 12)
     load_limit = max_tasks * 2              # revisions may add tasks (Stage 10)
@@ -265,7 +272,7 @@ def build_graph(ctx: Context) -> Graph:
         _save_plan_json(run.dir, s.plan)
         s.status = "building"
 
-        # ---- the first message (Chapter B: the project map instead of a plain file list)
+        # ---- gather the pieces of the first message (Chapters B and C decide how they're shown)
         files_text = (project_map(run.workspace, max_chars=cfg_memory.get("map_chars", 4000))
                       if ctx.memory is not None else _files_listing(run.workspace))
         fix_text = lessons_text = resume_text = ""
@@ -289,17 +296,50 @@ def build_graph(ctx: Context) -> Graph:
             resume_text = P["build_resume_note"].replace("{files}", _files_listing(run.workspace))
             _append_jsonl(run.transcript, {"event": "resume", "task": task["id"], "at": _now()})
 
+        task_text = (P["task_block"]
+                     .replace("{task_id}", task["id"]).replace("{task_title}", task["title"])
+                     .replace("{task_description}", task["description"] or "(no description)")
+                     .replace("{task_files}", ", ".join(task["files"]) or "(not specified)")
+                     .replace("{task_done_when}", _done_when(task["done_when"])))
+        pieces = {"request": s.request, "spec": (s.spec or "").strip(), "plan_status": plan_status(s.plan, task["id"]),
+                  "handoffs": handoffs(s.plan), "files": files_text}
+
+        relevant_block = ""
+        if cfg_context.get("enabled", True):            # Chapter C: one budget, shared by fraction
+            shares = cfg_context.get("shares", {})
+            query = " ".join([task["title"], task["description"] or "", last["output"] if last else ""])
+            ranked = rank_files(run.workspace, listed=task["files"], query=query,
+                                mentions=(last["output"] or "") if last else "")
+            full_relevant, _ = relevant_files(ranked, 10 ** 9)
+            strategies = {"handoffs": "tail", "fix": "tail"}
+            sections = [Section("task", task_text, required=True)]
+            for name, text in [*pieces.items(), ("relevant_files", full_relevant if ranked else ""),
+                               ("fix", fix_text), ("lessons", lessons_text), ("resume", resume_text)]:
+                sections.append(Section(name, text, shares.get(name, 0.05), strategies.get(name, "head")))
+            skeleton = len(P["task_request"]) + len(P["relevant_files_block"])
+            budget_chars = int(cfg_context.get("window_tokens", 16000) * cfg_context.get("first_message_fraction", 0.4)
+                               * CHARS_PER_TOKEN) - skeleton
+            alloc = allocate(sections, max(0, budget_chars))
+            texts = alloc.texts
+            shown: list[str] = []
+            if ranked:      # re-render whole files into the relevant_files allocation (not a blind cut)
+                texts["relevant_files"], shown = relevant_files(ranked, alloc.given["relevant_files"])
+                relevant_block = P["relevant_files_block"].replace("{relevant_files}", texts["relevant_files"])
+            stats = alloc.stats(sections)
+            ctx.tracer.event("context", budget_tokens=budget_chars // CHARS_PER_TOKEN,
+                             used_tokens=estimate_tokens("".join(texts.values())),
+                             sections=stats["sections"], files_shown=shown, attempt="fix" if fixing else "first")
+        else:
+            texts = {**pieces, "task": task_text, "fix": fix_text, "lessons": lessons_text, "resume": resume_text}
+
         first = (P["task_request"]
-                 .replace("{request}", s.request).replace("{spec}", (s.spec or "").strip())
-                 .replace("{plan_status}", plan_status(s.plan, task["id"])).replace("{handoffs}", handoffs(s.plan))
-                 .replace("{files}", files_text)
-                 .replace("{task_id}", task["id"]).replace("{task_title}", task["title"])
-                 .replace("{task_description}", task["description"] or "(no description)")
-                 .replace("{task_files}", ", ".join(task["files"]) or "(not specified)")
-                 .replace("{task_done_when}", _done_when(task["done_when"])))
-        for extra in (fix_text, lessons_text, resume_text):
-            if extra:
-                first += "\n\n" + extra
+                 .replace("{request}", texts["request"]).replace("{spec}", texts["spec"])
+                 .replace("{plan_status}", texts["plan_status"]).replace("{handoffs}", texts["handoffs"])
+                 .replace("{files}", texts["files"]).replace("{relevant_files_block}", relevant_block)
+                 .replace("{task_block}", texts["task"]))
+        for extra in ("fix", "lessons", "resume"):
+            if texts[extra]:
+                first += "\n\n" + texts[extra]
 
         result = execute_build(
             run, loop_model(), ctx.registry(run.workspace),

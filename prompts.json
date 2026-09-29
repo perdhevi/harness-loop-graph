@@ -136,10 +136,7 @@
     "=== WORKSPACE NOW ===",
     "{files}",
     "",
-    "=== YOUR TASK: {task_id} — {task_title} ===",
-    "{task_description}",
-    "Files: {task_files}",
-    "Done when: {task_done_when}",
+    "{relevant_files_block}{task_block}",
     "",
     "Do only this task, then give your hand-off note as the final answer."
   ],
@@ -243,5 +240,16 @@
     "Reviews of similar requests found these problems:",
     "{lessons}",
     "Make sure the plan covers these points where they apply to this request."
+  ],
+  "task_block": [
+    "=== YOUR TASK: {task_id} — {task_title} ===",
+    "{task_description}",
+    "Files: {task_files}",
+    "Done when: {task_done_when}"
+  ],
+  "relevant_files_block": [
+    "=== RELEVANT FILES (current content) ===",
+    "{relevant_files}",
+    ""
   ]
 }

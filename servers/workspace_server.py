@@ -25,7 +25,7 @@ from pathlib import Path
 SERVER_INFO = {"name": "harness-workspace", "version": "0.4.0"}
 DEFAULT_PROTOCOL = "2025-06-18"
 READ_LIMIT = 100_000
-OUTPUT_LIMIT = 100_000   # per stream; the start and the end of long output are kept
+OUTPUT_LIMIT = 100_000   # per stream; the harness's OutputLimiter (Chapter C) decides what the model sees
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache"}
 
 

@@ -44,7 +44,7 @@ def _buckets(events: list[dict]) -> list[dict]:
         elif t == "node_end" and current is not None:
             current.update(duration=e.get("duration_ms"), error=e.get("error"), diff=e.get("diff") or {})
             current = None
-        elif current is not None and t in ("model", "tool", "step", "check", "verdict", "normalized"):
+        elif current is not None and t in ("model", "tool", "step", "check", "verdict", "context", "normalized"):
             current["items"].append(e)
     return buckets
 
@@ -91,7 +91,12 @@ def render(events: list[dict], *, steps: bool = False) -> str:
             out.append("  " + _bucket_line(b))
             if steps:
                 for i in b["items"]:
-                    if i["type"] == "step":
+                    if i["type"] == "context":
+                        cuts = [f"{n} {v['cut']:,} chars" for n, v in i["sections"].items() if v["cut"]]
+                        out.append(f"               context  {i['budget_tokens']} tok budget · used {i['used_tokens']}"
+                                   f" · cut: {', '.join(cuts) or 'nothing'}"
+                                   f" · files shown: {', '.join(i['files_shown']) or 'none'}")
+                    elif i["type"] == "step":
                         what = i["action"] or ("final answer" if i["final"] else f"parse error: {i['parse_error']}")
                         out.append(f"               step {i['n']:<3} {what}")
                     elif i["type"] == "tool":

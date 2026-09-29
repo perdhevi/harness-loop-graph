@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Chapter A: Tracing](../../chapters/A-tracing/README.md) · [Index](../../README.md) · Chapter C: Context management →
+[← Chapter A: Tracing](../../chapters/A-tracing/README.md) · [Index](../../README.md) · [Chapter C: Context management →](../../chapters/C-context-management/README.md)
 
 ## Read this when
 
@@ -175,4 +175,4 @@ chapter B: memory — project map for tasks; lesson store (fix + review) with re
 
 ---
 
-[← Chapter A: Tracing](../../chapters/A-tracing/README.md) · [Index](../../README.md) · Chapter C: Context management →
+[← Chapter A: Tracing](../../chapters/A-tracing/README.md) · [Index](../../README.md) · [Chapter C: Context management →](../../chapters/C-context-management/README.md)

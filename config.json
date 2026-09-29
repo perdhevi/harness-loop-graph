@@ -59,6 +59,23 @@
     "recall_chars": 1500,
     "map_chars": 4000
   },
+  "context": {
+    "enabled": true,
+    "window_tokens": 16000,
+    "first_message_fraction": 0.4,
+    "max_observation_chars": 4000,
+    "shares": {
+      "request": 0.05,
+      "spec": 0.15,
+      "plan_status": 0.05,
+      "handoffs": 0.15,
+      "files": 0.1,
+      "relevant_files": 0.3,
+      "fix": 0.12,
+      "lessons": 0.05,
+      "resume": 0.03
+    }
+  },
   "replies": {
     "normalize": true
   }

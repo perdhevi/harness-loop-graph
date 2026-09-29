@@ -77,7 +77,7 @@ Read and build these when their symptom appears. Order is a suggestion, apart fr
 |---|---|---|---|---|
 | A | [Tracing](chapters/A-tracing/README.md) | You can't tell what happened in a run, or you're debugging with print statements. | Stage 02 (ReAct loop) | ✅ done |
 | B | [Memory](chapters/B-memory/README.md) | Later tasks ignore decisions made by earlier ones, or the same error and dead end come back build after build. | Stage 07 (graph & state), Stage 08 (task execution) | ✅ done |
-| C | Context management | Prompts grow too large, or are filled with whole files and long test logs that have nothing to do with the current task. | Stage 07 (graph & state) | ⬜ planned |
+| C | [Context management](chapters/C-context-management/README.md) | Prompts grow too large, or are filled with whole files and long test logs that have nothing to do with the current task. | Stage 07 (graph & state) | ✅ done |
 | D | Compaction | Long tasks forget what they already tried, or history gets cut off once it no longer fits. | Chapter C (context management) — compaction is triggered by its token budget | ⬜ planned |
 | E | Sensors | Tasks go in circles: rewriting the same file, hitting the same test failure, making no progress until they run out of steps. | Stage 08 (task execution), Stage 09 (verification) | ⬜ planned |
 | F | Persistence & benchmark | You changed the harness and can't tell whether it got better or worse. | Stage 10 (judge) for verdicts | ⬜ planned |
