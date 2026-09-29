@@ -1,10 +1,14 @@
 """harness-loop-graph — command line entry point.
 
-Stage 4: the loop gets real tools from MCP servers, starting with our own workspace
-server (files, edit, run_command), all confined to one project folder.
+Stage 5: `build` takes a request, creates runs/<id>/ with a fresh workspace, and lets the
+loop build the project end to end. No plan and no checks yet: "finished" means the model said so.
 
 Usage:
-    python main.py "What is (17 * 23) + 4, and is it prime?"
+    python main.py build "Build a Python CLI to-do app with add/list/done and pytest tests"
+    python main.py build --max-iterations 60 "..."
+    python main.py doctor                          # check settings, workspace server, model and reply format
+
+    python main.py "What is (17 * 23) + 4, and is it prime?"     # question mode (Stages 2–4)
     python main.py --workspace ./scratch "Write hello.py and run it"
     python main.py --once "Write a palindrome check in Python"   # single call (Stage 1)
     python main.py --list-tools
@@ -21,40 +25,10 @@ from pathlib import Path
 
 from loop import Step, run_loop
 from model_adapter import ModelError, make_adapter
-from tools.local import LocalToolSource
-from tools.mcp_client import McpClient, McpError, McpToolSource, load_servers
-from tools.registry import ToolRegistry
-
-ROOT = Path(__file__).parent
-CONFIG_PATH = ROOT / "config.json"
-PROMPTS_PATH = ROOT / "prompts.json"
-
-
-# ---------------------------------------------------------------- setup
-
-def load_json(path: Path) -> dict:
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def prompt_text(prompts: dict, key: str) -> str:
-    value = prompts[key]
-    return "\n".join(value) if isinstance(value, list) else value
-
-
-def build_registry(config: dict, workspace: Path, stack: contextlib.ExitStack) -> ToolRegistry:
-    """Local tools + one source per enabled MCP server. Servers close when `stack` closes."""
-    registry = ToolRegistry()
-    tools_cfg = config.get("tools", {})
-    if tools_cfg.get("local"):
-        registry.add_source(LocalToolSource(ROOT / tools_cfg["local"]))
-    if tools_cfg.get("mcp"):
-        for name, srv in load_servers(ROOT / tools_cfg["mcp"], workspace).items():
-            client = stack.enter_context(McpClient(
-                name, srv["command"], srv["args"], env=srv["env"], cwd=ROOT, timeout_s=srv["timeout_s"]))
-            client.initialize()
-            registry.add_source(McpToolSource(client))
-    return registry
+from build import execute_build, start_run
+from replies import NormalizingModel
+from runtime import CONFIG_PATH, PROMPTS_PATH, ROOT, build_registry, load_json, prompt_text
+from tools.mcp_client import McpError
 
 
 # ---------------------------------------------------------------- output
@@ -109,6 +83,90 @@ def run_react(request: str, workspace: Path, max_iterations: int | None = None):
         )
 
 
+# ---------------------------------------------------------------- Stages 5–6: build mode
+
+def check_context_settings(config: dict, say=print) -> list[str]:
+    """Warn when the harness plans for a bigger window than Ollama will really give the model."""
+    warnings = []
+    if config.get("provider") == "ollama":
+        num_ctx = config["providers"]["ollama"].get("num_ctx")
+        window = config.get("context", {}).get("window_tokens", 16000)
+        if not num_ctx:
+            warnings.append("providers.ollama.num_ctx is not set: Ollama may use 4,096 tokens and silently "
+                            "drop the start of long prompts (system prompt, tools, task)")
+        elif window > num_ctx:
+            warnings.append(f"context.window_tokens ({window}) is larger than providers.ollama.num_ctx ({num_ctx}): "
+                            "prompts will be cut by Ollama, silently. Make them match.")
+    for w in warnings:
+        say(f"[warning] {w}")
+    return warnings
+
+
+def run_build(request: str, max_iterations: int | None = None, *, model=None) -> dict:
+    """Straight from request to code: one loop, one fresh workspace, one run folder."""
+    config = load_json(CONFIG_PATH)
+    check_context_settings(config)
+    prompts = load_json(PROMPTS_PATH)
+    provider = config["provider"]
+    model = model or make_adapter(config)
+    if config.get("replies", {}).get("normalize", True):
+        model = NormalizingModel(model)
+    run = start_run(ROOT / config.get("build", {}).get("runs_dir", "runs"), request,
+                    meta={"provider": provider, "model": config["providers"][provider].get("model")})
+    print(f"[run] {run.dir}")
+    with contextlib.ExitStack() as stack:
+        summary = execute_build(
+            run, model, build_registry(config, run.workspace, stack),
+            prompt_text(prompts, "react_system") + "\n\n" + prompt_text(prompts, "build_rules"),
+            prompt_text(prompts, "build_request").replace("{request}", request),
+            max_iterations=max_iterations or config.get("build", {}).get("max_iterations", 40),
+            format_reminder=prompt_text(prompts, "format_reminder"), on_step=print_step)
+    summary["run_dir"] = str(run.dir)
+    return summary
+
+
+def print_summary(s: dict) -> None:
+    print("═" * 50)
+    if s["answer"]:
+        print(s["answer"])
+        print("─" * 50)
+    if s["status"] == "max_iterations":
+        print(f"Stopped: hit the iteration limit ({s['steps']} steps) without a final answer.")
+    elif s["status"] == "error":
+        print(f"Stopped with an error: {s['error']}")
+    elif s["status"] == "interrupted":
+        print("Interrupted (Ctrl-C). The run folder keeps what was done so far.")
+    print(f"status   : {s['status']}  (NOT verified: \"done\" means the model said so)")
+    print(f"steps    : {s['steps']}  ·  malformed: {s['malformed']}  ·  model calls: {s['model_calls']}")
+    tools = ", ".join(f"{k}×{v}" for k, v in sorted(s["tool_calls"].items())) or "none"
+    print(f"tools    : {tools}")
+    print(f"files    : {len(s['files'])}  " + ", ".join(f["path"] for f in s["files"][:12])
+          + (" …" if len(s["files"]) > 12 else ""))
+    print(f"size     : ~{s['approx_tokens_in']:,} tokens in / ~{s['approx_tokens_out']:,} out (chars ÷ 4)")
+    print(f"time     : {s['duration_s']}s")
+    print(f"run      : {s['run_dir']}")
+
+
+# ---------------------------------------------------------------- CLI
+
+def main_build(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="main.py build", description="Build a project from a request")
+    parser.add_argument("request", nargs="*")
+    parser.add_argument("--max-iterations", type=int, default=None)
+    args = parser.parse_args(argv)
+    request = " ".join(args.request).strip() or input("build request> ").strip()
+    if not request:
+        print("Empty request.")
+        return 1
+    try:
+        summary = run_build(request, args.max_iterations)
+    except (ModelError, McpError) as e:
+        print(f"[error] {e}")
+        return 1
+    print_summary(summary)
+    return {"finished": 0, "max_iterations": 2}.get(summary["status"], 1)
+
+
 def _safe_console() -> None:
     """Windows: printing ✓ or — to a cp1252 pipe/file raises UnicodeEncodeError; replace instead of crashing."""
     for stream in (sys.stdout, sys.stderr):
@@ -119,11 +177,100 @@ def _safe_console() -> None:
                 pass
 
 
+def main_doctor(argv: list[str]) -> int:
+    """Check the setup a build depends on: settings, the workspace server, the model and its reply format."""
+    import tempfile
+    import urllib.request
+    from loop import ParseError, parse_action
+    parser = argparse.ArgumentParser(prog="main.py doctor", description="Check the setup before a real build")
+    parser.add_argument("--skip-model", action="store_true", help="don't call the model")
+    args = parser.parse_args(argv)
+    config = load_json(CONFIG_PATH)
+    provider = config["provider"]
+    pcfg = config["providers"][provider]
+    ok = True
+
+    def report(good: bool, what: str, hint: str = "") -> None:
+        nonlocal ok
+        ok = ok and good
+        print(f"  {'✓' if good else '✗'} {what}" + (f"\n      → {hint}" if hint and not good else ""))
+
+    print(f"python   {sys.version.split()[0]} on {sys.platform} · encoding stdout={sys.stdout.encoding}")
+    print(f"provider {provider} · model {pcfg.get('model')}")
+    print("settings")
+    warnings = check_context_settings(config, say=lambda m: None)
+    report(not warnings, "context window matches what the model is given", "; ".join(warnings))
+
+    print("workspace server")
+    with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+        try:
+            tools = build_registry(config, Path(tmp), stack)
+            report(True, "starts")
+            wrote = tools.call("workspace.write_file", {"path": "check.py", "content": "print('ok ✓ — Ёлка')\n"})
+            report(not wrote.startswith("Error"), "writes a file with non-ASCII text", wrote[:200])
+            back = (Path(tmp) / "check.py").read_text(encoding="utf-8")
+            report("✓ — Ёлка" in back, "file content is intact on disk", repr(back[:80]))
+            ran = tools.call("workspace.run_command", {"command": "python check.py"})
+            report("ok ✓ — Ёлка" in ran and "exit code: 0" in ran, "runs `python` and reads its output",
+                   ran[:300] + "  (is `python` on PATH? On Windows, the Microsoft Store alias doesn't count)")
+        except Exception as e:
+            report(False, "starts", f"{type(e).__name__}: {e}")
+
+    if provider == "ollama":
+        print("ollama")
+        base = pcfg["base_url"].rstrip("/")
+        try:
+            with urllib.request.urlopen(f"{base}/api/tags", timeout=5) as r:
+                names = [m["name"] for m in json.loads(r.read())["models"]]
+            report(True, f"reachable at {base}")
+            want = pcfg["model"]
+            report(want in names or f"{want}:latest" in names, f"model {want} is pulled",
+                   f"run: ollama pull {want}   (found: {', '.join(names[:8]) or 'none'})")
+        except Exception as e:
+            report(False, f"reachable at {base}", f"{e} — is `ollama serve` running?")
+
+    if not args.skip_model and ok:
+        print("model reply format")
+        prompts = load_json(PROMPTS_PATH)
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            tools = build_registry(config, Path(tmp), stack)
+            system = prompt_text(prompts, "react_system").replace("{tools}", tools.describe())
+            t0 = time.perf_counter()
+            try:
+                reply = make_adapter(config).complete(system, [{"role": "user", "content":
+                        "Create a file hello.txt containing the word hi. Use the right tool."}])
+            except ModelError as e:
+                report(False, "model answers", str(e))
+                reply = None
+            if reply is not None:
+                report(True, f"model answers ({time.perf_counter() - t0:.1f}s)")
+                print("      raw reply: " + " ".join(reply.split())[:300])
+                from replies import normalize_reply
+                converted, how = normalize_reply(reply)
+                if how:
+                    print(f"      (not the harness format: converted from {how} — builds will still work)")
+                    reply = converted
+                try:
+                    act = parse_action(reply)
+                    good = tools.resolve(act.get("action", "")) == "workspace.write_file" if act.get("action") else False
+                    report(good, "reply is a valid JSON action that calls write_file",
+                           f"got {act.get('action') or 'a final answer'} — the model answered instead of using a tool")
+                except ParseError as e:
+                    report(False, "reply is a valid JSON action", f"{e}; reply starts: {reply[:200]!r}")
+    print("result:", "OK" if ok else "problems found (see ✗ above)")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     _safe_console()
+    if argv[:1] == ["doctor"]:
+        return main_doctor(argv[1:])
+    if argv[:1] == ["build"]:
+        return main_build(argv[1:])
 
-    parser = argparse.ArgumentParser(description="harness-loop-graph")
+    parser = argparse.ArgumentParser(description="harness-loop-graph",
+                                     epilog="For projects, use: main.py build \"<request>\"")
     parser.add_argument("request", nargs="*", help="a question or small task")
     parser.add_argument("--once", action="store_true", help="single model call (Stage 1)")
     parser.add_argument("--max-iterations", type=int, default=None)

@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model and real MCP servers — confirm with a real model)
 
-[← Stage 03: Tool registry & dispatch](../../stages/03-tool-registry/README.md) · [Index](../../README.md) · Stage 05: Request → first build →
+[← Stage 03: Tool registry & dispatch](../../stages/03-tool-registry/README.md) · [Index](../../README.md) · [Stage 05: Request → first build →](../../stages/05-first-build/README.md)
 
 ## Goal
 
@@ -158,4 +158,4 @@ A `runs/` folder per request (Stage 05), HTTP/SSE transports, MCP resources and 
 
 ---
 
-[← Stage 03: Tool registry & dispatch](../../stages/03-tool-registry/README.md) · [Index](../../README.md) · Stage 05: Request → first build →
+[← Stage 03: Tool registry & dispatch](../../stages/03-tool-registry/README.md) · [Index](../../README.md) · [Stage 05: Request → first build →](../../stages/05-first-build/README.md)

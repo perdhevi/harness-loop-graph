@@ -1,13 +1,18 @@
 """Other models' tool-call formats (found with Gemma 4: the file tool was never called)."""
 
+import contextlib
+import io
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import main  # noqa: E402
 from loop import parse_action  # noqa: E402
 from replies import normalize_reply  # noqa: E402
 from tools.registry import ToolRegistry, ToolSpec  # noqa: E402
@@ -108,6 +113,60 @@ class ResolveTests(unittest.TestCase):
         self.assertIsNone(reg.resolve("write_file"))
         self.assertIn("unknown tool 'write_file'", reg.call("write_file", {}))
         self.assertIn("unknown tool 'delete_everything'", reg.call("delete_everything", {}))
+
+
+class FakeModel:
+    def __init__(self, replies):
+        self.replies = list(replies)
+
+    def complete(self, system, messages):
+        return self.replies.pop(0)
+
+
+class GemmaBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def build(self, normalize=True):
+        config = json.loads((ROOT / "config.json").read_text())
+        config["replies"]["normalize"] = normalize
+        config["build"]["max_iterations"] = 4
+        (self.root / "config.json").write_text(json.dumps(config))
+        replies = ["I'll create the script.\n" + gemma("write_file", path="greet.py", content="print('Hello — world ✓')\n"),
+                   gemma("run_command", command="python greet.py"),
+                   '{"final_answer": "greet.py prints Hello — world ✓"}']
+        replies += [gemma("write_file", path="greet.py", content="x")] * 6      # spare replies if nothing parses
+        with mock.patch.object(main, "ROOT", self.root), mock.patch.object(main, "CONFIG_PATH", self.root / "config.json"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return main.run_build("greeter", model=FakeModel(replies))
+
+    def test_gemma_style_model_creates_files(self):
+        s = self.build()
+        self.assertEqual(s["status"], "finished")
+        run = Path(s["run_dir"])
+        self.assertEqual((run / "workspace" / "greet.py").read_text(encoding="utf-8"), "print('Hello — world ✓')\n")
+        steps = [json.loads(x) for x in (run / "transcript.jsonl").read_text().splitlines() if '"n"' in x]
+        self.assertEqual([x["action"] for x in steps[:2]], ["write_file", "run_command"])
+        self.assertIn("ran as workspace.write_file", steps[0]["observation"])
+        self.assertIn("Hello — world ✓", steps[1]["observation"])
+
+    def test_without_normalizing_no_file_is_created(self):
+        s = self.build(normalize=False)
+        self.assertNotEqual(s["status"], "finished")
+        self.assertFalse((Path(s["run_dir"]) / "workspace" / "greet.py").exists())
+
+
+class DoctorGemmaTests(unittest.TestCase):
+    def test_doctor_explains_the_conversion(self):
+        import test_platform
+        d = test_platform.DoctorTests("test_model_that_uses_the_tool")
+        code, out = d.doctor(gemma("write_file", path="hello.txt", content="hi"))
+        d.doCleanups()
+        self.assertEqual(code, 0, out)
+        self.assertIn("raw reply: <|tool_call>call:write_file", out)
+        self.assertIn("converted from gemma-call", out)
 
 
 if __name__ == "__main__":

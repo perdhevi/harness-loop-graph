@@ -14,10 +14,15 @@ The project is organised like a book in two parts:
 ```bash
 # Local model
 ollama pull qwen3:8b
+python main.py doctor            # checks settings, workspace server, model and its reply format
+python main.py build "Build a Python CLI to-do app with add/list/done and pytest tests"
 python main.py "What is (17 * 23) + 4, and is it prime?"
 
 # Or Anthropic: set "provider": "anthropic" in config.json, then
 export ANTHROPIC_API_KEY=...
+
+# Then read the result
+cat runs/<id>/summary.json
 
 # Tests (no model needed)
 python -m unittest discover -s tests -v
@@ -45,7 +50,7 @@ Build these in order.
 | 02 | [ReAct loop](stages/02-react-loop/README.md) | Turn the single call into a loop: reason → act → observe → repeat, with a max-iterations guard | ✅ done |
 | 03 | [Tool registry & dispatch](stages/03-tool-registry/README.md) | Give the loop one place to find tools and call them by name, with local Python tools defined in JSON | ✅ done |
 | 04 | [MCP tools & workspace](stages/04-mcp-workspace/README.md) | Connect to MCP servers and expose their tools through the same registry — starting with our own workspace server that lets the loop write files and run commands in one project folder | ✅ done |
-| 05 | Request → first build | Take a request in plain language, create a fresh project workspace, and let the loop build it end to end with the workspace tools | ⬜ planned |
+| 05 | [Request → first build](stages/05-first-build/README.md) | Take a request in plain language, create a fresh project workspace, and let the loop build it end to end with the workspace tools | ✅ done |
 | 06 | Planner: request → spec → tasks | Before writing code, turn the request into a short spec and an ordered task list, saved in the run folder | ⬜ planned |
 | 07 | Graph & state | Define one typed state object and wire the steps as a graph: intake → plan → build → finish | ⬜ planned |
 | 08 | Task-by-task execution | Execute the plan one task at a time, each in its own ReAct loop with a fresh, task-scoped conversation | ⬜ planned |

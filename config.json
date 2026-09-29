@@ -25,6 +25,10 @@
     "mcp": "mcp.json"
   },
   "workspace": "workspace",
+  "build": {
+    "max_iterations": 40,
+    "runs_dir": "runs"
+  },
   "replies": {
     "normalize": true
   }

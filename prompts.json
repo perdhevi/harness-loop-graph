@@ -21,5 +21,22 @@
   "format_reminder": [
     "Your last reply was not a valid action ({error}).",
     "Reply with exactly one JSON object: either {\"thought\": ..., \"action\": ..., \"args\": {...}} or {\"thought\": ..., \"final\": ...}."
+  ],
+  "build_rules": [
+    "You are building a complete, working project from the requester's description. The workspace starts empty.",
+    "",
+    "Rules for building:",
+    "- Use the workspace tools for everything: write files, run the code, run the tests, fix what fails.",
+    "- Keep the whole project inside the workspace. Prefer the standard library.",
+    "- Do not run pip install or npm install. If the project needs packages, list them in requirements.txt or package.json.",
+    "- Write a README.md that explains what the project does and how to run it.",
+    "- Before finishing, run the program, and its tests if there are any, and make sure they pass.",
+    "- Your final answer must list the files you created and the exact commands to run the project."
+  ],
+  "build_request": [
+    "Request:",
+    "{request}",
+    "",
+    "The workspace is empty. Start building."
   ]
 }

@@ -5,7 +5,9 @@
 3. qwen3 "thinks" by default; replies can end up in message.thinking with empty content.
 """
 
+import contextlib
 import http.server
+import io
 import json
 import sys
 import tempfile
@@ -16,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import main  # noqa: E402
 from model_adapter import OllamaAdapter  # noqa: E402
 from tools.mcp_client import McpClient, McpToolError  # noqa: E402
 
@@ -124,6 +127,80 @@ class ThinkNotSupportedTests(unittest.TestCase):
         self.assertEqual(["think" in b for b in seen], [True, False, False])     # asked once, then remembered
 
 
+class SettingsCheckTests(unittest.TestCase):
+    def config(self, num_ctx, window):
+        c = json.loads((ROOT / "config.json").read_text())
+        c["provider"] = "ollama"
+        c["providers"]["ollama"].pop("num_ctx", None)
+        if num_ctx:
+            c["providers"]["ollama"]["num_ctx"] = num_ctx
+        c.setdefault("context", {})["window_tokens"] = window
+        return c
+
+    def test_warnings(self):
+        self.assertIn("not set", main.check_context_settings(self.config(None, 16000), say=lambda m: None)[0])
+        self.assertIn("larger than", main.check_context_settings(self.config(4096, 16000), say=lambda m: None)[0])
+        self.assertEqual(main.check_context_settings(self.config(16384, 16000), say=lambda m: None), [])
+
+    def test_shipped_config_is_consistent(self):
+        c = json.loads((ROOT / "config.json").read_text())
+        self.assertGreaterEqual(c["providers"]["ollama"]["num_ctx"], c.get("context", {}).get("window_tokens", 16000))
+
+
 if __name__ == "__main__":
     unittest.main()
 
+
+class DoctorTests(unittest.TestCase):
+    def fake_ollama(self, chat_reply: str):
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                out = json.dumps({"models": [{"name": "qwen3:8b"}]}).encode()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(out)
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                out = json.dumps({"message": {"role": "assistant", "content": chat_reply}}).encode()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        c = json.loads((ROOT / "config.json").read_text())
+        c["provider"] = "ollama"
+        c["providers"]["ollama"]["base_url"] = f"http://127.0.0.1:{srv.server_address[1]}"
+        path = Path(tmp.name) / "config.json"
+        path.write_text(json.dumps(c))
+        return path
+
+    def doctor(self, reply):
+        from unittest import mock
+        with mock.patch.object(main, "CONFIG_PATH", self.fake_ollama(reply)), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            code = main.main(["doctor"])
+        return code, out.getvalue()
+
+    def test_model_that_uses_the_tool(self):
+        code, out = self.doctor('{"thought": "t", "action": "workspace.write_file", '
+                                '"args": {"path": "hello.txt", "content": "hi"}}')
+        self.assertEqual(code, 0, out)
+        self.assertIn("✓ reply is a valid JSON action that calls write_file", out)
+
+    def test_model_that_answers_with_code_instead(self):
+        code, out = self.doctor("Sure! Here is the file:\n```\nhi\n```")
+        self.assertEqual(code, 1)
+        self.assertIn("✗ reply is a valid JSON action", out)
+
+    def test_model_that_gives_a_final_answer_instead(self):
+        code, out = self.doctor('{"thought": "easy", "final": "Create hello.txt with: hi"}')
+        self.assertEqual(code, 1)
+        self.assertIn("the model answered instead of using a tool", out)
