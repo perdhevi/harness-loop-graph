@@ -1,12 +1,14 @@
-"""Adapter settings found on a real Windows + Ollama run.
+"""Fixes found when the first build didn't create files on Windows with Ollama.
 
-1. Ollama's small default context (4,096 tokens on < ~23 GB VRAM) silently drops the start of long prompts.
-2. qwen3 "thinks" by default; replies can end up in message.thinking with empty content.
+1. Windows pipes default to cp1252: UTF-8 file content was corrupted or crashed the workspace server.
+2. Ollama's small default context (4,096 tokens on < ~23 GB VRAM) silently drops the start of long prompts.
+3. qwen3 "thinks" by default; replies can end up in message.thinking with empty content.
 """
 
 import http.server
 import json
 import sys
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -15,6 +17,43 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from model_adapter import OllamaAdapter  # noqa: E402
+from tools.mcp_client import McpClient, McpToolError  # noqa: E402
+
+SERVER = str(ROOT / "servers" / "workspace_server.py")
+
+
+class WindowsEncodingTests(unittest.TestCase):
+    """The server runs with cp1252 pipes, as it would on Windows."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.c = McpClient("workspace", sys.executable, [SERVER, "--root", str(self.root), "--allow", "python"],
+                           env={"PYTHONIOENCODING": "cp1252"}, timeout_s=15)
+        self.addCleanup(self.c.close)
+        self.c.initialize()
+
+    def test_non_ascii_content_is_written_intact(self):
+        for name, text in [("dash.md", "# To-do CLI — simple\n"), ("cyr.md", "Ёлка ✓\n"), ("id.md", "Selamat datang, Raditya 🙂\n")]:
+            self.c.call_tool("write_file", {"path": name, "content": text})
+            self.assertEqual((self.root / name).read_text(encoding="utf-8"), text)
+            self.assertEqual(self.c.call_tool("read_file", {"path": name}), text)
+
+    def test_server_survives_bytes_cp1252_cannot_decode(self):
+        self.c.call_tool("write_file", {"path": "a.md", "content": "Ё"})          # UTF-8 D0 81: 0x81 is undefined in cp1252
+        self.assertIn("created b.md", self.c.call_tool("write_file", {"path": "b.md", "content": "still alive"}))
+
+    def test_child_python_can_print_unicode(self):
+        self.c.call_tool("write_file", {"path": "show.py", "content": "print('done ✓ — Ёлка')\n"})
+        out = self.c.call_tool("run_command", {"command": "python show.py"})
+        self.assertIn("exit code: 0", out)
+        self.assertIn("done ✓ — Ёлка", out)
+
+    def test_exe_suffix_passes_the_allow_list(self):
+        with self.assertRaises(McpToolError) as ctx:
+            self.c.call_tool("run_command", {"command": "python.exe -c \"print(1)\""})
+        self.assertNotIn("not allowed", str(ctx.exception))                    # on Linux: "program not found"
 
 
 class OllamaAdapterTests(unittest.TestCase):

@@ -21,8 +21,10 @@
     "max_iterations": 8
   },
   "tools": {
-    "local": "tools.json"
+    "local": "tools.json",
+    "mcp": "mcp.json"
   },
+  "workspace": "workspace",
   "replies": {
     "normalize": true
   }

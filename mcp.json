@@ -1,0 +1,26 @@
+{
+  "servers": {
+    "workspace": {
+      "command": "{python}",
+      "args": [
+        "servers/workspace_server.py",
+        "--root",
+        "{workspace}",
+        "--allow",
+        "python,python3,pip,pytest,node,npm"
+      ],
+      "timeout_s": 120,
+      "enabled": true
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "{workspace}"
+      ],
+      "timeout_s": 60,
+      "enabled": false
+    }
+  }
+}

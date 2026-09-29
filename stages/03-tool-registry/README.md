@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Stage 02: ReAct loop](../../stages/02-react-loop/README.md) · [Index](../../README.md) · Stage 04: MCP tools & workspace →
+[← Stage 02: ReAct loop](../../stages/02-react-loop/README.md) · [Index](../../README.md) · [Stage 04: MCP tools & workspace →](../../stages/04-mcp-workspace/README.md)
 
 ## Goal
 
@@ -156,4 +156,4 @@ MCP (Stage 04), tools that touch files or run commands (Stage 04), and truncatin
 
 ---
 
-[← Stage 02: ReAct loop](../../stages/02-react-loop/README.md) · [Index](../../README.md) · Stage 04: MCP tools & workspace →
+[← Stage 02: ReAct loop](../../stages/02-react-loop/README.md) · [Index](../../README.md) · [Stage 04: MCP tools & workspace →](../../stages/04-mcp-workspace/README.md)

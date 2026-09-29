@@ -5,6 +5,8 @@
     "Tools you can use:",
     "{tools}",
     "",
+    "File paths are relative to the project workspace. Tool names may have a server prefix, e.g. workspace.write_file.",
+    "",
     "On every turn, reply with exactly ONE JSON object and nothing else.",
     "",
     "To use a tool:",

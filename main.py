@@ -1,10 +1,11 @@
 """harness-loop-graph — command line entry point.
 
-Stage 3: the loop finds its tools in a registry; local tools are defined in tools.json.
+Stage 4: the loop gets real tools from MCP servers, starting with our own workspace
+server (files, edit, run_command), all confined to one project folder.
 
 Usage:
     python main.py "What is (17 * 23) + 4, and is it prime?"
-    python main.py "What time is it in Jakarta and how many hours until midnight?"
+    python main.py --workspace ./scratch "Write hello.py and run it"
     python main.py --once "Write a palindrome check in Python"   # single call (Stage 1)
     python main.py --list-tools
 """
@@ -12,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -20,6 +22,7 @@ from pathlib import Path
 from loop import Step, run_loop
 from model_adapter import ModelError, make_adapter
 from tools.local import LocalToolSource
+from tools.mcp_client import McpClient, McpError, McpToolSource, load_servers
 from tools.registry import ToolRegistry
 
 ROOT = Path(__file__).parent
@@ -39,12 +42,18 @@ def prompt_text(prompts: dict, key: str) -> str:
     return "\n".join(value) if isinstance(value, list) else value
 
 
-def build_registry(config: dict) -> ToolRegistry:
-    """Every tool source in one registry. Today: the local tools from tools.json."""
+def build_registry(config: dict, workspace: Path, stack: contextlib.ExitStack) -> ToolRegistry:
+    """Local tools + one source per enabled MCP server. Servers close when `stack` closes."""
     registry = ToolRegistry()
     tools_cfg = config.get("tools", {})
     if tools_cfg.get("local"):
         registry.add_source(LocalToolSource(ROOT / tools_cfg["local"]))
+    if tools_cfg.get("mcp"):
+        for name, srv in load_servers(ROOT / tools_cfg["mcp"], workspace).items():
+            client = stack.enter_context(McpClient(
+                name, srv["command"], srv["args"], env=srv["env"], cwd=ROOT, timeout_s=srv["timeout_s"]))
+            client.initialize()
+            registry.add_source(McpToolSource(client))
     return registry
 
 
@@ -78,24 +87,26 @@ def run_once(prompt: str) -> str:
     return model.complete(config["system_prompt"], [{"role": "user", "content": prompt}])
 
 
-# ---------------------------------------------------------------- Stages 2–3: the ReAct loop
+# ---------------------------------------------------------------- Stages 2–4: question mode
 
-def run_react(request: str, max_iterations: int | None = None):
+def run_react(request: str, workspace: Path, max_iterations: int | None = None):
     config = load_json(CONFIG_PATH)
     prompts = load_json(PROMPTS_PATH)
     model = make_adapter(config)
     if config.get("replies", {}).get("normalize", True):
         from replies import NormalizingModel
         model = NormalizingModel(model)
-    return run_loop(
-        model,
-        prompt_text(prompts, "react_system"),
-        request,
-        build_registry(config),
-        max_iterations=max_iterations or config.get("loop", {}).get("max_iterations", 8),
-        format_reminder=prompt_text(prompts, "format_reminder"),
-        on_step=print_step,
-    )
+    with contextlib.ExitStack() as stack:
+        registry = build_registry(config, workspace, stack)
+        return run_loop(
+            model,
+            prompt_text(prompts, "react_system"),
+            request,
+            registry,
+            max_iterations=max_iterations or config.get("loop", {}).get("max_iterations", 8),
+            format_reminder=prompt_text(prompts, "format_reminder"),
+            on_step=print_step,
+        )
 
 
 def _safe_console() -> None:
@@ -117,11 +128,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true", help="single model call (Stage 1)")
     parser.add_argument("--max-iterations", type=int, default=None)
     parser.add_argument("--list-tools", action="store_true", help="show available tools and exit")
+    parser.add_argument("--workspace", default=None, help="project folder the tools work in")
     args = parser.parse_args(argv)
 
     config = load_json(CONFIG_PATH)
+    workspace = Path(args.workspace or config.get("workspace", "workspace")).resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+
     if args.list_tools:
-        print(build_registry(config).describe())
+        try:
+            with contextlib.ExitStack() as stack:
+                print(build_registry(config, workspace, stack).describe())
+        except McpError as e:
+            print(f"[error] {e}")
+            return 1
         return 0
 
     request = " ".join(args.request).strip() or input("request> ").strip()
@@ -135,8 +155,9 @@ def main(argv: list[str] | None = None) -> int:
             print(run_once(request))
             print(f"\n[{time.perf_counter() - start:.1f}s]")
             return 0
-        result = run_react(request, args.max_iterations)
-    except ModelError as e:
+        print(f"[workspace] {workspace}")
+        result = run_react(request, workspace, args.max_iterations)
+    except (ModelError, McpError) as e:
         print(f"[error] {e}")
         return 1
     elapsed = time.perf_counter() - start
