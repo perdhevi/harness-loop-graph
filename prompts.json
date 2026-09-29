@@ -103,5 +103,10 @@
     "",
     "Work task by task. Before moving on, make sure the task's \"done when\" condition holds (run the command, or check the file exists).",
     "The workspace is empty. Start with the first task."
+  ],
+  "build_resume_note": [
+    "NOTE: this build was stopped earlier and is being resumed. The workspace is NOT empty. It already contains:",
+    "{files}",
+    "Read what is there before changing it, keep what works, and continue from where the work stopped."
   ]
 }

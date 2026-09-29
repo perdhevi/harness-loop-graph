@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Stage 05: Request → first build](../../stages/05-first-build/README.md) · [Index](../../README.md) · Stage 07: Graph & state →
+[← Stage 05: Request → first build](../../stages/05-first-build/README.md) · [Index](../../README.md) · [Stage 07: Graph & state →](../../stages/07-graph-state/README.md)
 
 ## Goal
 
@@ -175,4 +175,4 @@ Per-task loops and task status (Stage 08), checking `done_when` (Stage 09), and 
 
 ---
 
-[← Stage 05: Request → first build](../../stages/05-first-build/README.md) · [Index](../../README.md) · Stage 07: Graph & state →
+[← Stage 05: Request → first build](../../stages/05-first-build/README.md) · [Index](../../README.md) · [Stage 07: Graph & state →](../../stages/07-graph-state/README.md)

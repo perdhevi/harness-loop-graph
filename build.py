@@ -108,7 +108,11 @@ def execute_build(
     on_step: Callable[[Step], None] | None = None,
     plan_info: dict | None = None,
 ) -> dict:
-    """Run the loop for one build; always writes summary.json, even on error or Ctrl-C."""
+    """Run the loop for one build; always writes summary.json, even on error.
+
+    Ctrl-C writes the summary with status "interrupted" and is then re-raised,
+    so the graph (Stage 7) keeps the run resumable.
+    """
     counter = CountingModel(model)
     steps: list[Step] = []
 
@@ -154,4 +158,6 @@ def execute_build(
         "approx_tokens_out": counter.chars_out // 4,
     }
     run.summary_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if interrupted:
+        raise KeyboardInterrupt
     return summary
