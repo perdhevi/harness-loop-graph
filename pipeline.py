@@ -35,6 +35,7 @@ from state import BuildState, load_state, save_state
 from tracing import NullTracer, RoleModel
 from compaction import CompactingModel
 from replies import NormalizingModel
+from sensors import TaskSensors
 from memory import error_signature, project_map, render_fix_lessons, render_review_lessons
 from context import (CHARS_PER_TOKEN, OutputLimiter, Section, allocate, estimate_tokens, rank_files,
                      relevant_files)
@@ -158,7 +159,8 @@ def aggregate(run, plan: dict, status: str) -> dict:
         "answer": answer or None,
         "error": "; ".join(f"{t['id']} {t['status']}: {t.get('error', '')}" for t in failed) or None,
         "tasks": [{"id": t["id"], "title": t["title"], "status": t["status"],
-                   "steps": t.get("steps", 0), "error": t.get("error")} for t in plan["tasks"]],
+                   "steps": t.get("steps", 0), "error": t.get("error"),
+                   "stuck": (t.get("signals") or {}).get("peak_stuck")} for t in plan["tasks"]],
         **{k: totals[k] for k in ("steps", "malformed")},
         "tool_calls": dict(tools),
         "files": list_files(run.workspace),
@@ -177,6 +179,9 @@ def build_graph(ctx: Context) -> Graph:
     cfg_memory = ctx.config.get("memory", {})
     cfg_context = ctx.config.get("context", {})
     cfg_compaction = ctx.config.get("compaction", {})
+    cfg_sensors = ctx.config.get("sensors", {})
+    sensors_on = cfg_sensors.get("enabled", True)
+    warn_at = cfg_sensors.get("warn_at", 0.5)
     P = ctx.prompts
     max_tasks = cfg_plan.get("max_tasks", 12)
     load_limit = max_tasks * 2              # revisions may add tasks (Stage 10)
@@ -205,6 +210,15 @@ def build_graph(ctx: Context) -> Graph:
             note=P["compact_note"], mode=cfg_compaction.get("mode", "extractive"),
             summarizer=RoleModel(ctx.model, ctx.tracer, "compactor"), summarizer_system=P["compact_system"],
             on_compact=on_compact)
+
+    def report_signals(task: dict, sig: dict, phase: str) -> None:
+        """Chapter E consumer: warn once when a task first looks stuck; always trace."""
+        warn = sig["stuck"] >= warn_at and not task.get("sensor_warned")
+        if warn:
+            task["sensor_warned"] = True
+            ctx.say(f"[sensor] {task['id']} looks stuck ({sig['stuck']:.2f}): {'; '.join(sig['reasons']) or '—'}")
+        ctx.tracer.event("signals", phase=phase, warning=warn,
+                         **{k: v for k, v in sig.items() if k != "reasons"}, reasons=sig["reasons"])
 
     def intake(s: BuildState) -> None:
         if s.run_dir:
@@ -300,6 +314,10 @@ def build_graph(ctx: Context) -> Graph:
                         .replace("{output}", last["output"] or "(no output)")
                         .replace("{n}", str(task.get("fix_attempts", 1)))
                         .replace("{max}", str(max_fix)))
+            if sensors_on:                              # Chapter E consumer: say when it's the same failure again
+                repeats = TaskSensors(task, run.workspace).max_same_failure()
+                if repeats >= 2:
+                    fix_text += "\n" + P["sensor_note"].replace("{n}", str(repeats))
             if ctx.memory is not None:                  # Chapter B: fixes that worked for similar failures
                 lessons = ctx.memory.recall("fix", error_signature(last["output"] or ""))
                 if lessons:
@@ -357,13 +375,28 @@ def build_graph(ctx: Context) -> Graph:
             if texts[extra]:
                 first += "\n\n" + texts[extra]
 
-        result = execute_build(
-            run, loop_model(task["id"]), ctx.registry(run.workspace),
-            P["react_system"] + "\n\n" + P["task_rules"], first,
-            max_iterations=cfg_build.get("task_max_iterations", 20),
-            format_reminder=P["format_reminder"], on_step=ctx.on_step,
-            label={"task": task["id"], "fix": task.get("fix_attempts", 0)} if fixing else {"task": task["id"]},
-            write_summary=False)
+        on_step = ctx.on_step
+        sensors = TaskSensors(task, run.workspace) if sensors_on else None
+        if sensors is not None:                         # Chapter E: observe every step (never steer)
+            def on_step(step, _base=ctx.on_step):
+                sensors.observe_step(step)
+                sig = sensors.scores()
+                if sig["stuck"] >= warn_at and not task.get("sensor_warned"):
+                    report_signals(task, sig, "step")
+                if _base:
+                    _base(step)
+        try:
+            result = execute_build(
+                run, loop_model(task["id"]), ctx.registry(run.workspace),
+                P["react_system"] + "\n\n" + P["task_rules"], first,
+                max_iterations=cfg_build.get("task_max_iterations", 20),
+                format_reminder=P["format_reminder"], on_step=on_step,
+                label={"task": task["id"], "fix": task.get("fix_attempts", 0)} if fixing else {"task": task["id"]},
+                write_summary=False)
+        finally:
+            if sensors is not None:
+                report_signals(task, sensors.save(), "attempt")
+                _save_plan_json(run.dir, s.plan)
 
         for k in SUM_FIELDS:
             task[k] = (task.get(k) or 0) + result[k]
@@ -398,6 +431,10 @@ def build_graph(ctx: Context) -> Graph:
                                        "target": res.target, "exit_code": res.exit_code})
         ctx.tracer.event("check", phase="verify", kind=res.kind, target=res.target, ok=res.ok,
                          exit_code=res.exit_code)
+        if sensors_on:                                  # Chapter E: a check is an observation too
+            sensors = TaskSensors(task, run.workspace)
+            sensors.observe_check(res.ok, res.output or "")
+            report_signals(task, sensors.save(), "check")
         if res.ok:
             task["status"], task["verified"] = "done", True
             task.pop("error", None)
@@ -451,7 +488,7 @@ def build_graph(ctx: Context) -> Graph:
         evidence = {
             "request": s.request,
             "spec": (s.spec or "").strip(),
-            "tasks": tasks_evidence(s.plan),
+            "tasks": tasks_evidence(s.plan, cfg_sensors.get("evidence_at", 0.3)),
             "final_checks": final_checks_evidence(s.final_checks),
             "files": workspace_contents(run.workspace, file_chars=cfg_judge.get("file_chars", 12000),
                                         total_chars=cfg_judge.get("evidence_chars", 60000)),

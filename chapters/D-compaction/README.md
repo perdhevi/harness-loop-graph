@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Chapter C: Context management](../../chapters/C-context-management/README.md) · [Index](../../README.md) · Chapter E: Sensors →
+[← Chapter C: Context management](../../chapters/C-context-management/README.md) · [Index](../../README.md) · [Chapter E: Sensors →](../../chapters/E-sensors/README.md)
 
 ## Read this when
 
@@ -171,4 +171,4 @@ chapter D: compaction — CompactingModel view (goal + summary + recent steps), 
 
 ---
 
-[← Chapter C: Context management](../../chapters/C-context-management/README.md) · [Index](../../README.md) · Chapter E: Sensors →
+[← Chapter C: Context management](../../chapters/C-context-management/README.md) · [Index](../../README.md) · [Chapter E: Sensors →](../../chapters/E-sensors/README.md)

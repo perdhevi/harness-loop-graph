@@ -60,7 +60,7 @@ def workspace_contents(workspace: Path, *, file_chars: int = 12000, total_chars:
     return "".join(parts) or "(the workspace is empty)"
 
 
-def tasks_evidence(plan: dict) -> str:
+def tasks_evidence(plan: dict, evidence_at: float = 0.3) -> str:
     lines = []
     for t in plan["tasks"]:
         lines.append(f"{t['id']} {t['title']} — {t['status']}")
@@ -72,6 +72,10 @@ def tasks_evidence(plan: dict) -> str:
             lines.append(f"    last check: {c['kind']} {c['target']} → {'pass' if c['ok'] else 'FAIL'}{code}")
         if t.get("error"):
             lines.append(f"    error: {t['error']}")
+        sig = t.get("signals")               # Chapter E: only when notable
+        if sig and (sig.get("peak_stuck", 0) >= evidence_at or sig.get("drift", 0) >= evidence_at):
+            reasons = "; ".join(sig.get("reasons", [])) or "—"
+            lines.append(f"    signals: looked stuck {sig['peak_stuck']:.2f} (peak), drift {sig.get('drift', 0):.2f} — {reasons}")
     return "\n".join(lines)
 
 

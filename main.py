@@ -190,7 +190,8 @@ def print_summary(s: dict) -> None:
     for t in s.get("tasks", []):
         mark = {"done": "✓", "failed": "✗", "blocked": "–"}.get(t["status"], "·")
         err = f"  ({t['error']})" if t.get("error") else ""
-        print(f"   {mark} {t['id']:<4} {t['title'][:40]:<40} {t['status']:<8} {t['steps']:>3} steps{err}")
+        stuck = f"  ⚠ looked stuck {t['stuck']:.2f}" if (t.get("stuck") or 0) >= 0.5 else ""
+        print(f"   {mark} {t['id']:<4} {t['title'][:40]:<40} {t['status']:<8} {t['steps']:>3} steps{err}{stuck}")
     if s.get("final_checks"):
         shown = {}
         for c in s["final_checks"]:

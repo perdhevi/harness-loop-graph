@@ -21,7 +21,8 @@ TASK_STATUSES = {"pending", "in_progress", "done", "failed", "blocked"}
 PROGRESS_FIELDS = ("handoff", "error", "steps", "malformed", "tool_calls", "duration_s",
                    "model_calls", "approx_tokens_in", "approx_tokens_out",
                    "checks", "verified", "fix_attempts", "fix_pending", "attempt_open",   # + Stage 9
-                   "lessons_shown")                                                        # + Chapter B
+                   "lessons_shown",                                                        # + Chapter B
+                   "signals", "sensor_state", "sensor_warned")                             # + Chapter E
 
 Asker = Callable[[list[str]], list[str]]   # questions -> answers
 

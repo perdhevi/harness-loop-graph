@@ -85,6 +85,11 @@
     "mode": "extractive",
     "ceiling": 0.95
   },
+  "sensors": {
+    "enabled": true,
+    "warn_at": 0.5,
+    "evidence_at": 0.3
+  },
   "replies": {
     "normalize": true
   }
