@@ -23,6 +23,7 @@ class BuildState:
     current_task: str | None = None
     next: str | None = None
     history: list[str] = field(default_factory=list)
+    final_checks: list | None = None
     summary: dict | None = None
     error: str | None = None
     updated_at: str | None = None

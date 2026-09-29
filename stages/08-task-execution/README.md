@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Stage 07: Graph & state](../../stages/07-graph-state/README.md) · [Index](../../README.md) · Stage 09: Verification & fix loop →
+[← Stage 07: Graph & state](../../stages/07-graph-state/README.md) · [Index](../../README.md) · [Stage 09: Verification & fix loop →](../../stages/09-verification/README.md)
 
 ## Goal
 
@@ -155,4 +155,4 @@ Checking `done_when` with a real command run (Stage 09). For now, "done" still m
 
 ---
 
-[← Stage 07: Graph & state](../../stages/07-graph-state/README.md) · [Index](../../README.md) · Stage 09: Verification & fix loop →
+[← Stage 07: Graph & state](../../stages/07-graph-state/README.md) · [Index](../../README.md) · [Stage 09: Verification & fix loop →](../../stages/09-verification/README.md)

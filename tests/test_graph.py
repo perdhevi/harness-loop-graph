@@ -138,7 +138,8 @@ class PipelineTests(unittest.TestCase):
         s = self.build("greeter", model=FakeModel([PLAN, write("app.py"), final()]))
         st = load_state(s["run_dir"])
         self.assertEqual((st.status, st.next), ("finished", None))
-        self.assertEqual(st.history, ["intake", "plan", "next_task", "run_task", "next_task", "finish"])
+        self.assertEqual(st.history, ["intake", "plan", "next_task", "run_task", "verify",
+                                      "next_task", "final_check", "finish"])
         self.assertEqual(st.plan["title"], "Greeter")
         self.assertEqual(json.loads((Path(s["run_dir"]) / "summary.json").read_text())["status"], "finished")
 
@@ -153,7 +154,7 @@ class PipelineTests(unittest.TestCase):
         s = self.build(None, from_run=str(run_dir), model=FakeModel([PLAN, write("app.py"), final()]))
         self.assertEqual(s["status"], "finished")
         self.assertEqual(load_state(run_dir).history,
-                         ["intake", "plan", "next_task", "run_task", "next_task", "finish"])
+                         ["intake", "plan", "next_task", "run_task", "verify", "next_task", "final_check", "finish"])
 
     def test_ctrl_c_during_build_then_resume(self):
         with self.assertRaises(RunStopped) as ctx:

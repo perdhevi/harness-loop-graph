@@ -19,7 +19,8 @@ LIST_FIELDS = ("features", "tech", "constraints", "out_of_scope", "assumptions")
 TASK_STATUSES = {"pending", "in_progress", "done", "failed", "blocked"}
 # progress fields written by the harness (Stage 8); kept when a plan is re-validated
 PROGRESS_FIELDS = ("handoff", "error", "steps", "malformed", "tool_calls", "duration_s",
-                   "model_calls", "approx_tokens_in", "approx_tokens_out")
+                   "model_calls", "approx_tokens_in", "approx_tokens_out",
+                   "checks", "verified", "fix_attempts", "fix_pending", "attempt_open")   # + Stage 9
 
 Asker = Callable[[list[str]], list[str]]   # questions -> answers
 

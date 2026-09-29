@@ -35,6 +35,11 @@
     "max_attempts": 3,
     "max_questions": 3
   },
+  "verify": {
+    "max_fix_attempts": 2,
+    "timeout_s": 120,
+    "output_chars": 3000
+  },
   "replies": {
     "normalize": true
   }

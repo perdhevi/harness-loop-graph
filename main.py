@@ -1,7 +1,7 @@
 """harness-loop-graph — command line entry point.
 
-Stage 8: `build` runs as a graph — intake → plan → (next_task → run_task) → finish.
-Each task of the plan runs in its own ReAct loop, with a fresh conversation.
+Stage 9: `build` runs as a graph — intake → plan → (next_task → run_task → verify) → final_check
+→ finish. The harness runs every task's done-when check itself and sends failures back to be fixed.
 
 Usage:
     python main.py build "Build a Python CLI to-do app with add/list/done and pytest tests"
@@ -163,7 +163,16 @@ def print_summary(s: dict) -> None:
         mark = {"done": "✓", "failed": "✗", "blocked": "–"}.get(t["status"], "·")
         err = f"  ({t['error']})" if t.get("error") else ""
         print(f"   {mark} {t['id']:<4} {t['title'][:40]:<40} {t['status']:<8} {t['steps']:>3} steps{err}")
-    print(f"status   : {s['status']}  (NOT verified: \"done\" means the model said so)")
+    if s.get("final_checks"):
+        shown = {}
+        for c in s["final_checks"]:
+            shown.setdefault((c["kind"], c["target"]), c)
+        print("final    : " + "  ".join(f"{'✓' if c['ok'] else '✗'} {t}" for (_, t), c in shown.items()))
+    if s.get("verified"):
+        how = "each task's check run by the harness"
+    else:
+        how = "NOT verified (no plan, no checks)"
+    print(f"status   : {s['status']}  ({how})")
     print(f"steps    : {s['steps']}  ·  malformed: {s['malformed']}  ·  model calls: {s['model_calls']}")
     tools = ", ".join(f"{k}×{v}" for k, v in sorted(s["tool_calls"].items())) or "none"
     print(f"tools    : {tools}")

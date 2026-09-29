@@ -5,6 +5,9 @@ Stage 7:  intake → plan → build → finish, with state checkpointed to
 Stage 8:  with a plan, `build` is replaced by a task loop:
           plan → next_task ⇄ run_task → finish. Each task runs in its own
           ReAct loop; task status and hand-off notes live in plan.json.
+Stage 9:  run_task → verify: the harness runs each task's done_when itself;
+          a failed check sends the task back to run_task in fix mode.
+          final_check re-runs every check before finish.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from build import execute_build, list_files, open_run, start_run
+from checks import run_check
 from graph import END, Graph
 from loop import Step
 from planner import PlanError, load_plan, make_plan, render_tasks, save_plan
@@ -93,6 +97,12 @@ def _done_when(dw: dict) -> str:
     return f"`{dw['command']}` succeeds" if "command" in dw else f"`{dw['file']}` exists"
 
 
+def _describe_check(c: dict) -> str:
+    if c["kind"] == "file":
+        return f"file `{c['target']}` " + ("exists" if c["ok"] else "is missing")
+    return f"`{c['target']}` → " + ("no exit code" if c["exit_code"] is None else f"exit {c['exit_code']}")
+
+
 def _files_listing(workspace: Path) -> str:
     files = list_files(workspace)
     return "\n".join(f"- {f['path']} ({f['bytes']} bytes)" for f in files) or "(empty)"
@@ -145,9 +155,11 @@ def aggregate(run, plan: dict, status: str) -> dict:
 def build_graph(ctx: Context) -> Graph:
     cfg_build = ctx.config.get("build", {})
     cfg_plan = ctx.config.get("plan", {})
+    cfg_verify = ctx.config.get("verify", {})
     P = ctx.prompts
     max_tasks = cfg_plan.get("max_tasks", 12)
     load_limit = max_tasks
+    max_fix = cfg_verify.get("max_fix_attempts", 2)
 
     def loop_model():
         """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}) into the JSON action."""
@@ -223,29 +235,45 @@ def build_graph(ctx: Context) -> Graph:
     def run_task(s: BuildState) -> None:
         run = open_run(Path(s.run_dir))
         task = next(t for t in s.plan["tasks"] if t["id"] == s.current_task)
-        resuming = task["status"] == "in_progress"          # a previous attempt never returned
-        task["status"] = "in_progress"
+        resuming = bool(task.get("attempt_open"))          # a previous attempt never returned
+        fixing = bool(task.get("fix_pending"))
+        task["status"], task["attempt_open"] = "in_progress", True
         _save_plan_json(run.dir, s.plan)
         s.status = "building"
+
+        # ---- the first message: the task, plus fix details or a resume note when needed
+        files_text = _files_listing(run.workspace)
+        fix_text = resume_text = ""
+        last = task["checks"][-1] if fixing else None
+        if fixing:
+            fix_text = (P["fix_request"]
+                        .replace("{handoff}", task.get("handoff") or "(none)")
+                        .replace("{check}", _describe_check(last))
+                        .replace("{output}", last["output"] or "(no output)")
+                        .replace("{n}", str(task.get("fix_attempts", 1)))
+                        .replace("{max}", str(max_fix)))
+        if resuming:
+            resume_text = P["build_resume_note"].replace("{files}", _files_listing(run.workspace))
+            _append_jsonl(run.transcript, {"event": "resume", "task": task["id"], "at": _now()})
 
         first = (P["task_request"]
                  .replace("{request}", s.request).replace("{spec}", (s.spec or "").strip())
                  .replace("{plan_status}", plan_status(s.plan, task["id"])).replace("{handoffs}", handoffs(s.plan))
-                 .replace("{files}", _files_listing(run.workspace))
+                 .replace("{files}", files_text)
                  .replace("{task_id}", task["id"]).replace("{task_title}", task["title"])
                  .replace("{task_description}", task["description"] or "(no description)")
                  .replace("{task_files}", ", ".join(task["files"]) or "(not specified)")
                  .replace("{task_done_when}", _done_when(task["done_when"])))
-        if resuming:
-            first += "\n\n" + P["build_resume_note"].replace("{files}", _files_listing(run.workspace))
-            _append_jsonl(run.transcript, {"event": "resume", "task": task["id"], "at": _now()})
+        for extra in (fix_text, resume_text):
+            if extra:
+                first += "\n\n" + extra
 
         result = execute_build(
             run, loop_model(), ctx.registry(run.workspace),
             P["react_system"] + "\n\n" + P["task_rules"], first,
             max_iterations=cfg_build.get("task_max_iterations", 20),
             format_reminder=P["format_reminder"], on_step=ctx.on_step,
-            label={"task": task["id"]},
+            label={"task": task["id"], "fix": task.get("fix_attempts", 0)} if fixing else {"task": task["id"]},
             write_summary=False)
 
         for k in SUM_FIELDS:
@@ -256,23 +284,78 @@ def build_graph(ctx: Context) -> Graph:
         if result["status"] == "error":            # model/server trouble: stop, keep the task in progress
             _save_plan_json(run.dir, s.plan)
             raise TaskError(f"task {task['id']}: {result['error']}")
+        task["attempt_open"] = False
         if result["status"] == "finished":
-            task["status"], task["handoff"] = "done", result["answer"] or ""
-            task.pop("error", None)
-            ctx.say(f"[task] {task['id']} → done ({result['steps']} steps)")
+            task["handoff"] = result["answer"] or ""      # still in_progress: verify decides
+            ctx.say(f"[task] {task['id']} claims done → checking")
         else:
             task["status"] = "failed"
             task["error"] = f"ran out of steps ({cfg_build.get('task_max_iterations', 20)})"
+            task.pop("fix_pending", None)
             ctx.say(f"[task] {task['id']} → failed ({task['error']})")
         _save_plan_json(run.dir, s.plan)
+
+    def verify(s: BuildState) -> None:
+        run = open_run(Path(s.run_dir))
+        task = next(t for t in s.plan["tasks"] if t["id"] == s.current_task)
+        if task["status"] != "in_progress":          # ran out of steps: nothing to check
+            return
+        res = run_check(task["done_when"], run.workspace, ctx.registry(run.workspace),
+                        timeout_s=cfg_verify.get("timeout_s", 120),
+                        output_chars=cfg_verify.get("output_chars", 3000))
+        checks = task.setdefault("checks", [])
+        checks.append({"attempt": len(checks) + 1, **res.to_dict()})
+        _append_jsonl(run.transcript, {"event": "check", "task": task["id"], "ok": res.ok,
+                                       "target": res.target, "exit_code": res.exit_code})
+        if res.ok:
+            task["status"], task["verified"] = "done", True
+            task.pop("error", None)
+            task.pop("fix_pending", None)
+            ctx.say(f"[check] {task['id']} ✓ {res.describe()}")
+        elif task.get("fix_attempts", 0) < max_fix:
+            task["fix_attempts"] = task.get("fix_attempts", 0) + 1
+            task["fix_pending"] = True
+            ctx.say(f"[check] {task['id']} ✗ {res.describe()} → fix attempt {task['fix_attempts']}/{max_fix}")
+        else:
+            task["status"], task["verified"] = "failed", False
+            task["error"] = f"check failed after {task.get('fix_attempts', 0)} fix attempts: {res.describe()}"
+            task.pop("fix_pending", None)
+            ctx.say(f"[check] {task['id']} ✗ {res.describe()} → failed")
+        _save_plan_json(run.dir, s.plan)
+
+    def final_check(s: BuildState) -> None:
+        run = open_run(Path(s.run_dir))
+        s.plan, _ = load_plan(run.dir, load_limit)
+        seen: dict[str, dict] = {}
+        results = []
+        for task in s.plan["tasks"]:
+            if task["status"] != "done":
+                continue
+            key = json.dumps(task["done_when"], sort_keys=True)
+            if key not in seen:
+                res = run_check(task["done_when"], run.workspace, ctx.registry(run.workspace),
+                                timeout_s=cfg_verify.get("timeout_s", 120),
+                                output_chars=cfg_verify.get("output_chars", 3000))
+                seen[key] = res.to_dict()
+                ctx.say(f"[final] {'✓' if res.ok else '✗'} {res.describe()}")
+            results.append({"task": task["id"], **seen[key]})
+        s.final_checks = results
+        _append_jsonl(run.transcript, {"event": "final_checks", "ok": all(r["ok"] for r in results),
+                                       "count": len(seen)})
 
     def finish(s: BuildState) -> None:
         run = open_run(Path(s.run_dir))
         if s.plan is not None and s.status != "plan_failed":
             s.plan, _ = load_plan(run.dir, load_limit)
             all_done = all(t["status"] == "done" for t in s.plan["tasks"])
-            s.status = "finished" if all_done else "partial"
+            regressions = [c for c in (s.final_checks or []) if not c["ok"]]
+            s.status = "finished" if all_done and not regressions else "partial"
             s.summary = aggregate(run, s.plan, s.status)
+            s.summary["verified"] = True
+            s.summary["final_checks"] = s.final_checks or []
+            if regressions:
+                note = "; ".join(f"regression in {c['task']}: {_describe_check(c)}" for c in regressions)
+                s.summary["error"] = "; ".join(x for x in [s.summary["error"], note] if x)
             s.error = s.summary["error"]
         elif s.summary is None:     # ended before building (plan_failed)
             s.summary = {"id": s.run_id, "status": s.status, "error": s.error, "plan": _plan_info(s.plan)}
@@ -283,15 +366,23 @@ def build_graph(ctx: Context) -> Graph:
             return "finish"
         return "build" if s.plan is None else "next_task"
 
+    def after_verify(s: BuildState) -> str:
+        task = next(t for t in s.plan["tasks"] if t["id"] == s.current_task)
+        return "run_task" if task.get("fix_pending") else "next_task"
+
     g = Graph(entry="intake")
     for name, fn in [("intake", intake), ("plan", plan), ("build", build),
-                     ("next_task", next_task), ("run_task", run_task), ("finish", finish)]:
+                     ("next_task", next_task), ("run_task", run_task), ("verify", verify),
+                     ("final_check", final_check), ("finish", finish)]:
         g.node(name, fn)
     g.edge("intake", "plan")
     g.branch("plan", after_plan, {"build", "next_task", "finish"})
     g.edge("build", "finish")
-    g.branch("next_task", lambda s: "run_task" if s.current_task else "finish", {"run_task", "finish"})
-    g.edge("run_task", "next_task")
+    g.branch("next_task", lambda s: "run_task" if s.current_task else "final_check",
+             {"run_task", "final_check"})
+    g.edge("run_task", "verify")
+    g.branch("verify", after_verify, {"run_task", "next_task"})
+    g.edge("final_check", "finish")
     g.edge("finish", END)
     return g
 
@@ -336,8 +427,10 @@ def run_pipeline(
         start = None
 
     graph = build_graph(ctx)
-    # per task: next_task + run_task, plus a few for intake, plan and finish
-    max_steps = 10 + 2 * ctx.config.get("plan", {}).get("max_tasks", 12)
+    # per task: next_task + run_task + verify, plus (run_task + verify) per fix attempt
+    max_tasks = ctx.config.get("plan", {}).get("max_tasks", 12)
+    max_fix = ctx.config.get("verify", {}).get("max_fix_attempts", 2)
+    max_steps = 10 + max_tasks * (3 + 2 * max_fix)
     try:
         state = graph.run(state, start=start, checkpoint=save_state, on_enter=on_enter, max_steps=max_steps,
                           interrupt_before={"build", "next_task"} if review else set())

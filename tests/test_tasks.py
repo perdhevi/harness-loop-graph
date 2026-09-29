@@ -111,7 +111,8 @@ class TaskTests(unittest.TestCase):
         lines = [json.loads(x) for x in (Path(s["run_dir"]) / "transcript.jsonl").read_text().splitlines()]
         self.assertEqual([x["task"] for x in lines if "n" in x], ["T1", "T1", "T2", "T2", "T3", "T3"])
         self.assertEqual(load_state(s["run_dir"]).history,
-                         ["intake", "plan"] + ["next_task", "run_task"] * 3 + ["next_task", "finish"])
+                         ["intake", "plan"] + ["next_task", "run_task", "verify"] * 3
+                         + ["next_task", "final_check", "finish"])
 
     def test_failed_task_blocks_dependents_but_not_others(self):
         model = FakeModel([

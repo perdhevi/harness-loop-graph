@@ -117,6 +117,7 @@
     "- Build on what earlier tasks left in the workspace. Read a file before changing it.",
     "- Prefer the standard library. Do not run pip install or npm install.",
     "- Before finishing, make sure the task's \"done when\" condition holds (run the command, or check the file exists).",
+    "- The harness runs the done-when check itself after you finish. Saying the task is done does not make it done.",
     "- Your final answer is a short hand-off note for the tasks that follow: what you did, which files you created or changed, and anything they need to know (function names, commands, decisions)."
   ],
   "task_request": [
@@ -141,5 +142,14 @@
     "Done when: {task_done_when}",
     "",
     "Do only this task, then give your hand-off note as the final answer."
+  ],
+  "fix_request": [
+    "=== YOUR PREVIOUS ATTEMPT AT THIS TASK DID NOT PASS ITS CHECK ===",
+    "Your hand-off note said: {handoff}",
+    "The harness then checked: {check}",
+    "Output (end):",
+    "{output}",
+    "",
+    "Find the cause and fix it so the check passes. This is fix attempt {n} of {max}."
   ]
 }
