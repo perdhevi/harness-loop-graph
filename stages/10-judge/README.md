@@ -68,6 +68,23 @@ The tests also cover:
 - The summary's `model_calls` and token totals count **task** calls only. Planner, judge and reviser calls are logged in `planner.jsonl` and `judge.jsonl` but not added up. (Chapter A's `main.py trace` shows all of them, by role.)
 - A revision can't reopen a `done` task. It adds a new task instead. That's deliberate, since it keeps the history of what passed.
 
+## Follow-up: fixing a finished run (`--fix`)
+
+Added after Chapter F. `--resume` only continues a run that stopped part-way. To change a run that already **finished** (accepted, escalated or partial), give it your feedback:
+
+```bash
+python main.py build --fix runs/<id> "list crashes on an empty todo.json; also add a --json flag"
+```
+
+The run re-enters the graph at `revise`, with your text in place of a judge verdict (`"source": "human"`). From there it is the normal path: the reviser turns the feedback into retried and/or new `R<n>-…` tasks, each task runs and is checked, the final checks run again, and the judge reviews the result (skip it with `--no-judge`). `SPEC.md` gets a `## Revision <n>` section marked *fix requested by a person*, and `summary.json` and `REPORT.md` are rewritten.
+
+- The judge gets its full `max_revisions` budget again after each fix, so your request doesn't use up its rounds.
+- If the reviser can't turn the feedback into a valid change, nothing is changed and the run ends `escalated` with the reason.
+- `--fix` refuses runs that haven't finished (use `--resume` first) and runs built with `--no-plan` (there is no plan to revise).
+- Each fix adds tasks. A plan can hold up to twice `plan.max_tasks`, so after many fixes, start a new run.
+
+Tests: `tests/test_fix.py`.
+
 ## Commit
 
 ```

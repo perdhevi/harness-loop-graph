@@ -381,7 +381,8 @@ def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spe
 
 def revision_section(record: dict, verdict: dict, plan: dict) -> str:
     added = [t for t in plan["tasks"] if t["id"] in record["added"]]
-    lines = [f"## Revision {record['round']}", "", f"**Why:** {verdict.get('feedback', '').strip()}", "",
+    why = "**Why (fix requested by a person):**" if verdict.get("source") == "human" else "**Why:**"
+    lines = [f"## Revision {record['round']}", "", f"{why} {verdict.get('feedback', '').strip()}", "",
              f"**Changes:** {record['changes'] or '(not described)'}", ""]
     if record["retry"]:
         lines += [f"**Retried:** {', '.join(record['retry'])}", ""]

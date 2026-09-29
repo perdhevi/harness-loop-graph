@@ -11,6 +11,8 @@ Stage 9:  run_task → verify: the harness runs each task's done_when itself;
 Stage 10: final_check → judge: a separate model call compares the project with
           the request; revise sends feedback back through the planner,
           escalate hands a REPORT.md to a human.
+--fix:    a finished run re-enters at revise with a person's feedback in place
+          of a judge verdict, then goes through tasks, checks and the judge again.
 """
 
 from __future__ import annotations
@@ -168,6 +170,12 @@ def aggregate(run, plan: dict, status: str) -> dict:
         "duration_s": round(duration, 2),
         **{k: totals[k] for k in ("model_calls", "approx_tokens_in", "approx_tokens_out")},
     }
+
+
+def human_verdict(feedback: str, round_no: int) -> dict:
+    """A person's fix request, shaped like a judge verdict so the revise node can use it."""
+    return {"verdict": "revise", "source": "human", "requirements": [], "problems": [],
+            "feedback": feedback.strip(), "summary": "", "overrides": [], "round": round_no}
 
 
 def append_index(ctx: Context, s: BuildState) -> None:
@@ -521,7 +529,8 @@ def build_graph(ctx: Context) -> Graph:
         ctx.say(f"[judge] reviewing the project (round {s.revisions + 1}) …")
         v = make_verdict(ctx.model, P, evidence, max_attempts=cfg_judge.get("max_attempts", 2),
                          log=lambda e: _append_jsonl(run.dir / "judge.jsonl", {"round": s.revisions, **e}))
-        v = apply_rules(v, s.plan, s.final_checks, revisions_used=s.revisions, max_revisions=max_revisions)
+        v = apply_rules(v, s.plan, s.final_checks, revisions_used=s.revisions - s.revision_base,
+                        max_revisions=max_revisions)
         v["round"] = s.revisions
         s.verdicts.append(v)
         met = sum(1 for r in v["requirements"] if r["met"])
@@ -567,11 +576,15 @@ def build_graph(ctx: Context) -> Graph:
             s.plan, _ = load_plan(run.dir, load_limit)
             all_done = all(t["status"] == "done" for t in s.plan["tasks"])
             regressions = [c for c in (s.final_checks or []) if not c["ok"]]
-            if s.verdicts:
-                s.status = "accepted" if s.verdicts[-1]["verdict"] == "accept" else "escalated"
+            last = s.verdicts[-1] if s.verdicts else None
+            judged = last is not None and last.get("source") != "human"     # a --fix without a judge after it
+            if judged:
+                s.status = "accepted" if last["verdict"] == "accept" else "escalated"
                 if ctx.memory is not None and s.status == "accepted" and s.lessons_shown:
                     ctx.memory.mark(s.lessons_shown, helped=True)
                     s.lessons_shown = []
+            elif last is not None and last["verdict"] == "escalate":      # the fix couldn't be planned
+                s.status = "escalated"
             else:
                 s.status = "finished" if all_done and not regressions else "partial"
             s.summary = aggregate(run, s.plan, s.status)
@@ -580,7 +593,9 @@ def build_graph(ctx: Context) -> Graph:
             if regressions:
                 note = "; ".join(f"regression in {c['task']}: {_describe_check(c)}" for c in regressions)
                 s.summary["error"] = "; ".join(x for x in [s.summary["error"], note] if x)
-            if s.verdicts:
+            if last is not None and not judged and last["overrides"]:
+                s.summary["error"] = "; ".join(x for x in [s.summary["error"], last["overrides"][-1]["reason"]] if x)
+            if judged:
                 s.summary["verdict"] = s.verdicts[-1]
                 s.summary["revisions"] = s.revisions
                 readme = run.workspace / "README.md"
@@ -656,10 +671,29 @@ def run_pipeline(
     max_iterations: int | None = None,
     judge: bool | None = None,
     tags: dict | None = None,
+    fix: str | None = None,
     on_enter: Callable[[str, BuildState], None] | None = None,
 ) -> dict:
-    """Start a new build, or resume one from its state.json."""
-    if resume_dir:
+    """Start a new build, resume one from its state.json, or (`fix`) revise a finished one."""
+    if resume_dir and fix is not None:
+        state = load_state(resume_dir)
+        if not fix.strip():
+            raise PlanError("--fix needs a description of what to change")
+        if state.plan is None:
+            raise PlanError(f"{state.run_dir} was built without a plan (--no-plan); --fix needs a plan to revise. "
+                            "Start a new run instead")
+        if state.next or state.status in RESUMABLE_ENDED | {"planned", "plan_failed"}:
+            raise PlanError(f"{state.run_dir} hasn't finished (status: {state.status}). "
+                            "Finish it first with --resume (or --from-run for a reviewed plan)")
+        state.plan, state.spec = load_plan(Path(state.run_dir), ctx.config.get("plan", {}).get("max_tasks", 12) * 2)
+        state.verdicts.append(human_verdict(fix, state.revisions))
+        state.revision_base = state.revisions + 1         # the judge gets its full budget again
+        state.error = None
+        start = "revise"
+        if judge is not None:
+            state.options["judge"] = judge
+        ctx.say(f"[run] {state.run_dir}  (fixing: {' '.join(fix.split())[:80]})")
+    elif resume_dir:
         state = load_state(resume_dir)
         if state.next:
             start = state.next

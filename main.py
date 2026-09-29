@@ -9,6 +9,7 @@ Usage:
     python main.py build --review "..."           # plan only, then stop for a human to review
     python main.py build --from-run runs/<id>     # build from a reviewed (maybe edited) plan
     python main.py build --resume runs/<id>       # continue a run that was stopped or crashed
+    python main.py build --fix runs/<id> "..."    # change a finished run: your feedback → revise → build → judge
     python main.py build --no-plan "..."          # Stage 5 behaviour
     python main.py build --no-judge "..."         # Stage 9 behaviour (checks, no judge)
     python main.py build --max-iterations 60 "..."
@@ -134,7 +135,7 @@ def make_store(config: dict) -> LessonStore | None:
 def run_build(request: str | None, max_iterations: int | None = None, *, model=None,
               ask=None, review: bool = False, from_run: str | None = None, no_plan: bool = False,
               judge: bool | None = None, verbose_graph: bool = True, config: dict | None = None,
-              tags: dict | None = None, quiet: bool = False) -> dict:
+              tags: dict | None = None, quiet: bool = False, fix: str | None = None) -> dict:
     """Plan and build through the graph. `from_run` resumes a paused or stopped run.
 
     `config` overrides config.json (Chapter F: benchmarks pick provider/model); `tags` go to the run index.
@@ -157,7 +158,7 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
     )
     on_enter = (lambda name, state: print(f"[graph] → {name}")) if verbose_graph else None
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
-                        max_iterations=max_iterations, judge=judge, tags=tags,
+                        max_iterations=max_iterations, judge=judge, tags=tags, fix=fix,
                         on_enter=None if quiet else on_enter)
 
 
@@ -236,15 +237,24 @@ def main_build(argv: list[str]) -> int:
     parser.add_argument("--no-plan", action="store_true", help="skip planning (Stage 5 behaviour)")
     parser.add_argument("--resume", metavar="RUN_DIR", help="continue a run that was stopped or crashed")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge (Stage 9 behaviour)")
+    parser.add_argument("--fix", metavar="RUN_DIR",
+                        help="change a finished run; the request text says what to fix or add")
     args = parser.parse_args(argv)
+    if args.fix and (args.from_run or args.resume or args.review or args.no_plan):
+        parser.error("--fix can't be combined with --from-run, --resume, --review or --no-plan")
     if args.review and args.no_plan:
         parser.error("--review needs a plan; drop --no-plan")
     if args.from_run and args.resume:
         parser.error("use either --from-run or --resume")
     args.from_run = args.from_run or args.resume
 
-    request = None
-    if not args.from_run:
+    request = fix = None
+    if args.fix:
+        fix = " ".join(args.request).strip() or input("what should change> ").strip()
+        if not fix:
+            print("Say what to fix, e.g. build --fix runs/<id> \"list crashes on an empty file\"")
+            return 1
+    elif not args.from_run:
         request = " ".join(args.request).strip() or input("build request> ").strip()
         if not request:
             print("Empty request.")
@@ -253,7 +263,7 @@ def main_build(argv: list[str]) -> int:
     try:
         summary = run_build(request, args.max_iterations,
                             ask=ask_in_terminal if interactive else None,
-                            review=args.review, from_run=args.from_run, no_plan=args.no_plan,
+                            review=args.review, from_run=args.from_run or args.fix, no_plan=args.no_plan, fix=fix,
                             judge=False if args.no_judge else None)
     except RunStopped as e:
         what = "interrupted" if isinstance(e.cause, KeyboardInterrupt) else f"stopped: {type(e.cause).__name__}: {e}"

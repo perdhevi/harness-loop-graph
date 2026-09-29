@@ -23,6 +23,7 @@ export ANTHROPIC_API_KEY=...
 
 # Then read the result
 cat runs/<id>/REPORT.md
+python main.py build --fix runs/<id> "list crashes on an empty file"   # change a finished run
 python main.py trace runs/<id>
 
 # Measure: replay the benchmark and compare with your baseline
