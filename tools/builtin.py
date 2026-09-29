@@ -1,12 +1,9 @@
-"""Stage 2 — one stub tool, just enough to prove the loop.
-
-Stage 3 replaces this file with a tool registry and tools defined in JSON.
-"""
+"""Stage 3 — Python handlers for local tools listed in tools.json."""
 
 import ast
 import operator
-
-from loop import Tool
+from datetime import datetime, timezone as _tz
+from zoneinfo import ZoneInfo
 
 _OPS = {
     ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -34,11 +31,7 @@ def calculate(expression: str) -> str:
     return str(_eval(ast.parse(expression, mode="eval")))
 
 
-TOOLS = {
-    "calculate": Tool(
-        name="calculate",
-        description="Evaluate an arithmetic expression, e.g. '(17 * 23) + 4'.",
-        params={"expression": "string"},
-        fn=calculate,
-    ),
-}
+def current_time(timezone: str = "UTC") -> str:
+    """Current date and time in ISO 8601 for an IANA timezone."""
+    tz = _tz.utc if timezone.upper() == "UTC" else ZoneInfo(timezone)
+    return datetime.now(tz).isoformat(timespec="seconds")

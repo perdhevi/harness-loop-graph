@@ -1,0 +1,34 @@
+[
+  {
+    "name": "calculate",
+    "description": "Evaluate an arithmetic expression, e.g. '(17 * 23) + 4'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "expression": {
+          "type": "string",
+          "description": "arithmetic expression"
+        }
+      },
+      "required": [
+        "expression"
+      ]
+    },
+    "handler": "tools.builtin:calculate"
+  },
+  {
+    "name": "current_time",
+    "description": "Current date and time as ISO 8601. Optional IANA timezone, e.g. 'Asia/Jakarta'; defaults to UTC.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone name"
+        }
+      },
+      "required": []
+    },
+    "handler": "tools.builtin:current_time"
+  }
+]

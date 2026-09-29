@@ -20,6 +20,9 @@
   "loop": {
     "max_iterations": 8
   },
+  "tools": {
+    "local": "tools.json"
+  },
   "replies": {
     "normalize": true
   }

@@ -1,12 +1,12 @@
 """harness-loop-graph — command line entry point.
 
-Stage 2: the single call becomes a ReAct loop — reason → act → observe → repeat —
-with one stub tool (calculate) and a max-iterations guard.
+Stage 3: the loop finds its tools in a registry; local tools are defined in tools.json.
 
 Usage:
     python main.py "What is (17 * 23) + 4, and is it prime?"
-    python main.py --max-iterations 4 "..."
+    python main.py "What time is it in Jakarta and how many hours until midnight?"
     python main.py --once "Write a palindrome check in Python"   # single call (Stage 1)
+    python main.py --list-tools
 """
 
 from __future__ import annotations
@@ -19,7 +19,8 @@ from pathlib import Path
 
 from loop import Step, run_loop
 from model_adapter import ModelError, make_adapter
-from stub_tools import TOOLS
+from tools.local import LocalToolSource
+from tools.registry import ToolRegistry
 
 ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "config.json"
@@ -36,6 +37,15 @@ def load_json(path: Path) -> dict:
 def prompt_text(prompts: dict, key: str) -> str:
     value = prompts[key]
     return "\n".join(value) if isinstance(value, list) else value
+
+
+def build_registry(config: dict) -> ToolRegistry:
+    """Every tool source in one registry. Today: the local tools from tools.json."""
+    registry = ToolRegistry()
+    tools_cfg = config.get("tools", {})
+    if tools_cfg.get("local"):
+        registry.add_source(LocalToolSource(ROOT / tools_cfg["local"]))
+    return registry
 
 
 # ---------------------------------------------------------------- output
@@ -68,7 +78,7 @@ def run_once(prompt: str) -> str:
     return model.complete(config["system_prompt"], [{"role": "user", "content": prompt}])
 
 
-# ---------------------------------------------------------------- Stage 2: the ReAct loop
+# ---------------------------------------------------------------- Stages 2–3: the ReAct loop
 
 def run_react(request: str, max_iterations: int | None = None):
     config = load_json(CONFIG_PATH)
@@ -81,7 +91,7 @@ def run_react(request: str, max_iterations: int | None = None):
         model,
         prompt_text(prompts, "react_system"),
         request,
-        TOOLS,
+        build_registry(config),
         max_iterations=max_iterations or config.get("loop", {}).get("max_iterations", 8),
         format_reminder=prompt_text(prompts, "format_reminder"),
         on_step=print_step,
@@ -106,7 +116,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("request", nargs="*", help="a question or small task")
     parser.add_argument("--once", action="store_true", help="single model call (Stage 1)")
     parser.add_argument("--max-iterations", type=int, default=None)
+    parser.add_argument("--list-tools", action="store_true", help="show available tools and exit")
     args = parser.parse_args(argv)
+
+    config = load_json(CONFIG_PATH)
+    if args.list_tools:
+        print(build_registry(config).describe())
+        return 0
 
     request = " ".join(args.request).strip() or input("request> ").strip()
     if not request:

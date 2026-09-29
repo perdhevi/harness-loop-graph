@@ -43,7 +43,7 @@ Build these in order.
 |---|---|---|---|
 | 01 | [Model adapter](stages/01-model-adapter/README.md) | Send one prompt to a model and get one answer back | ✅ done |
 | 02 | [ReAct loop](stages/02-react-loop/README.md) | Turn the single call into a loop: reason → act → observe → repeat, with a max-iterations guard | ✅ done |
-| 03 | Tool registry & dispatch | Give the loop one place to find tools and call them by name, with local Python tools defined in JSON | ⬜ planned |
+| 03 | [Tool registry & dispatch](stages/03-tool-registry/README.md) | Give the loop one place to find tools and call them by name, with local Python tools defined in JSON | ✅ done |
 | 04 | MCP tools & workspace | Connect to MCP servers and expose their tools through the same registry — starting with our own workspace server that lets the loop write files and run commands in one project folder | ⬜ planned |
 | 05 | Request → first build | Take a request in plain language, create a fresh project workspace, and let the loop build it end to end with the workspace tools | ⬜ planned |
 | 06 | Planner: request → spec → tasks | Before writing code, turn the request into a short spec and an ordered task list, saved in the run folder | ⬜ planned |
@@ -67,6 +67,12 @@ Read and build these when their symptom appears. Order is a suggestion, apart fr
 | F | Persistence & benchmark | You changed the harness and can't tell whether it got better or worse. | Stage 10 (judge) for verdicts | ⬜ planned |
 
 **Fixed dependencies inside Part 2:** C (context management) before D (compaction). A (tracing) is worth reading as soon as Stage 02 is done.
+
+## How tools flow
+
+```
+ReAct loop ──▶ ToolRegistry ──▶ LocalToolSource   (tools.json + Python functions)
+```
 
 ## Layout
 

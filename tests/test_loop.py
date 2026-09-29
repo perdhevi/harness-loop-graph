@@ -1,4 +1,4 @@
-"""Stage 2 tests — the ReAct loop against a scripted fake model.
+"""Stage 2/3 tests — the ReAct loop against a scripted fake model, with tools from the registry.
 
 Run:  python -m unittest discover -s tests -v
 """
@@ -10,12 +10,31 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from loop import ParseError, Tool, parse_action, run_loop  # noqa: E402
-from stub_tools import TOOLS, calculate  # noqa: E402
+from loop import ParseError, parse_action, run_loop  # noqa: E402
+from tools.builtin import calculate  # noqa: E402
+from tools.local import LocalToolSource  # noqa: E402
+from tools.registry import ToolRegistry, ToolSpec  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
-def local_registry() -> dict:
-    return dict(TOOLS)
+def local_registry() -> ToolRegistry:
+    r = ToolRegistry()
+    r.add_source(LocalToolSource(ROOT / "tools.json"))
+    return r
+
+
+class DictSource:
+    """A tiny in-memory tool source for tests."""
+
+    def __init__(self, fns: dict):
+        self.fns = fns
+
+    def list_tools(self):
+        return [ToolSpec(n, "test tool", {"type": "object", "properties": {}}) for n in self.fns]
+
+    def call(self, name, args):
+        return self.fns[name](**args)
 
 SYSTEM = "Tools:\n{tools}\nReply with one JSON object."
 
@@ -121,7 +140,8 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(len(model.calls), 3)
 
     def test_tool_returning_non_string(self):
-        tools = {"info": Tool("info", "test tool", {}, lambda: {"ok": True})}
+        tools = ToolRegistry()
+        tools.add_source(DictSource({"info": lambda: {"ok": True}}))
         model = FakeModel([j(action="info"), j(final="done")])
         r = run_loop(model, SYSTEM, "q", tools)
         self.assertEqual(r.steps[0].observation, '{"ok": true}')

@@ -5,7 +5,8 @@ or the iteration budget runs out.
 
 The loop only knows three things:
   - a model with complete(system, messages) -> str   (Stage 1 adapter)
-  - a dict of tools: name -> Tool(name, description, params, fn)
+  - a tool box with describe() -> str and call(name, args) -> str
+    (Stage 3's ToolRegistry; call() never raises)
   - the action format: one JSON object per reply
 
 It never prints and never raises on bad model output or tool failures;
@@ -17,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Callable, Protocol
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _DECODER = json.JSONDecoder()
@@ -25,12 +26,9 @@ _DECODER = json.JSONDecoder()
 
 # ---------------------------------------------------------------- data types
 
-@dataclass
-class Tool:
-    name: str
-    description: str
-    params: dict[str, str]          # argument name -> type, shown to the model
-    fn: Callable[..., Any]
+class ToolBox(Protocol):
+    def describe(self) -> str: ...
+    def call(self, name: str, args: dict) -> str: ...
 
 
 @dataclass
@@ -100,37 +98,16 @@ def parse_action(text: str) -> dict:
 
 # ---------------------------------------------------------------- the loop
 
-def render_tools(tools: dict[str, Tool]) -> str:
-    if not tools:
-        return "(none)"
-    return "\n".join(f"- {t.name}({', '.join(f'{k}: {v}' for k, v in t.params.items())}) — {t.description}"
-                     for t in tools.values())
-
-
-def dispatch(tools: dict[str, Tool], name: str, args: dict) -> str:
-    """Run a tool. Never raises: every failure becomes an observation."""
-    tool = tools.get(name)
-    if tool is None:
-        return f"Error: unknown tool '{name}'. Available tools: {', '.join(tools) or '(none)'}"
-    try:
-        result = tool.fn(**args)
-    except TypeError as e:
-        return f"Error: bad arguments for '{name}': {e}"
-    except Exception as e:
-        return f"Error: {name} failed: {type(e).__name__}: {e}"
-    return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
-
-
-def build_system(template: str, tools: dict[str, Tool]) -> str:
+def build_system(template: str, tools: ToolBox) -> str:
     # str.replace, not str.format: the template contains literal JSON braces.
-    return template.replace("{tools}", render_tools(tools))
+    return template.replace("{tools}", tools.describe())
 
 
 def run_loop(
     model,
     system_template: str,
     request: str,
-    tools: dict[str, Tool],
+    tools: ToolBox,
     *,
     max_iterations: int = 8,
     format_reminder: str = "Reply with exactly one JSON action object ({error}).",
@@ -161,7 +138,7 @@ def run_loop(
                 return LoopResult("final", step.final, steps, messages)
             # act
             step.action, step.args = act["action"], act["args"]
-            observation = dispatch(tools, step.action, step.args)
+            observation = tools.call(step.action, step.args)
 
         # observe
         step.observation = observation

@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Stage 01: Model adapter](../../stages/01-model-adapter/README.md) · [Index](../../README.md) · Stage 03: Tool registry & dispatch →
+[← Stage 01: Model adapter](../../stages/01-model-adapter/README.md) · [Index](../../README.md) · [Stage 03: Tool registry & dispatch →](../../stages/03-tool-registry/README.md)
 
 ## Goal
 
@@ -129,4 +129,4 @@ A tool registry and tools defined in JSON (Stage 03), real workspace tools (Stag
 
 ---
 
-[← Stage 01: Model adapter](../../stages/01-model-adapter/README.md) · [Index](../../README.md) · Stage 03: Tool registry & dispatch →
+[← Stage 01: Model adapter](../../stages/01-model-adapter/README.md) · [Index](../../README.md) · [Stage 03: Tool registry & dispatch →](../../stages/03-tool-registry/README.md)

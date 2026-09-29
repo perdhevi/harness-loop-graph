@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 from loop import parse_action  # noqa: E402
 from replies import normalize_reply  # noqa: E402
+from tools.registry import ToolRegistry, ToolSpec  # noqa: E402
 
 Q = '<|"|>'
 
@@ -78,6 +79,35 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalize_reply(final), (final, None))
         for text in ["Here is the code: print(1)", "call:write_file{path:" + Q + "unterminated"]:
             self.assertEqual(normalize_reply(text), (text, None))
+
+
+class ResolveTests(unittest.TestCase):
+    class Src:
+        def __init__(self, *names):
+            self.names = names
+
+        def list_tools(self):
+            return [ToolSpec(n, "d", {"type": "object", "properties": {}}) for n in self.names]
+
+        def call(self, name, args):
+            return f"called {name}"
+
+    def test_unique_short_names_resolve(self):
+        reg = ToolRegistry()
+        reg.add_source(self.Src("workspace.write_file", "workspace.read_file", "calculate"))
+        for name in ["write_file", "workspace_write_file", "workspace/write_file", "functions.write_file", "Write_File"]:
+            with self.subTest(name=name):
+                self.assertEqual(reg.resolve(name), "workspace.write_file")
+        out = reg.call("write_file", {})
+        self.assertTrue(out.startswith("(ran as workspace.write_file; use that exact name next time)"))
+        self.assertIn("called workspace.write_file", out)
+
+    def test_ambiguous_or_unknown_names_are_errors(self):
+        reg = ToolRegistry()
+        reg.add_source(self.Src("workspace.write_file", "filesystem.write_file"))
+        self.assertIsNone(reg.resolve("write_file"))
+        self.assertIn("unknown tool 'write_file'", reg.call("write_file", {}))
+        self.assertIn("unknown tool 'delete_everything'", reg.call("delete_everything", {}))
 
 
 if __name__ == "__main__":
