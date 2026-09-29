@@ -46,6 +46,7 @@ def _diff(before: dict, after: dict) -> dict:
 class NullTracer:
     enabled = False
     node = task = None
+    role_override = None        # Chapter D: e.g. "compactor" for summary calls made inside a task
 
     def bind(self, run_dir, **kw): ...
     def event(self, type_, **fields): ...
@@ -73,6 +74,7 @@ class Tracer(NullTracer):
         self.node: str | None = None
         self.task: str | None = None
         self.broken: str | None = None      # set if writing ever fails
+        self.role_override: str | None = None
 
     # ------------------------------------------------------------ output
 
@@ -160,7 +162,7 @@ class TracingModel:
     def complete(self, system: str, messages: list[dict]) -> str:
         chars_in = len(system) + sum(len(m.get("content", "")) for m in messages)
         start = self.tracer._clock()
-        role = ROLE_BY_NODE.get(self.tracer.node or "", "other")
+        role = self.tracer.role_override or ROLE_BY_NODE.get(self.tracer.node or "", "other")
         try:
             reply = self.model.complete(system, messages)
         except BaseException as ex:
@@ -205,3 +207,16 @@ class TracingTools:
                            command=args.get("command") if name.endswith("run_command") else None)
         return result
 
+
+class RoleModel:
+    """Tags calls made through it with a role in the trace (e.g. the compaction summariser)."""
+
+    def __init__(self, model, tracer, role: str):
+        self.model, self.tracer, self.role = model, tracer, role
+
+    def complete(self, system: str, messages: list[dict]) -> str:
+        previous, self.tracer.role_override = self.tracer.role_override, self.role
+        try:
+            return self.model.complete(system, messages)
+        finally:
+            self.tracer.role_override = previous

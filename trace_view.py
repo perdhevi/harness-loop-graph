@@ -44,7 +44,8 @@ def _buckets(events: list[dict]) -> list[dict]:
         elif t == "node_end" and current is not None:
             current.update(duration=e.get("duration_ms"), error=e.get("error"), diff=e.get("diff") or {})
             current = None
-        elif current is not None and t in ("model", "tool", "step", "check", "verdict", "context", "normalized"):
+        elif current is not None and t in ("model", "tool", "step", "check", "verdict", "context", "compaction",
+                                           "normalized"):
             current["items"].append(e)
     return buckets
 
@@ -68,6 +69,9 @@ def _bucket_line(b: dict) -> str:
     if norm:
         kinds = sorted({i["format"] for i in norm})
         parts.append(f"normalized×{len(norm)} ({', '.join(kinds)})")
+    comps = [i for i in b["items"] if i["type"] == "compaction"]
+    if comps:
+        parts.append(f"compacted×{len(comps)}")
     for c in (i for i in b["items"] if i["type"] == "check"):
         parts.append(f"check {'✓' if c['ok'] else '✗'} {c['target']}")
     for v in (i for i in b["items"] if i["type"] == "verdict"):
@@ -96,6 +100,10 @@ def render(events: list[dict], *, steps: bool = False) -> str:
                         out.append(f"               context  {i['budget_tokens']} tok budget · used {i['used_tokens']}"
                                    f" · cut: {', '.join(cuts) or 'nothing'}"
                                    f" · files shown: {', '.join(i['files_shown']) or 'none'}")
+                    elif i["type"] == "compaction":
+                        out.append(f"               compact  steps {i['from_step']}–{i['to_step']} → summary"
+                                   f" ({fmt_tok(i['tokens_before'])} → {fmt_tok(i['tokens_after'])} tok,"
+                                   f" pressure {i['pressure_before']:.2f} → {i['pressure_after']:.2f}, {i['mode']})")
                     elif i["type"] == "step":
                         what = i["action"] or ("final answer" if i["final"] else f"parse error: {i['parse_error']}")
                         out.append(f"               step {i['n']:<3} {what}")

@@ -32,7 +32,8 @@ from loop import Step
 from planner import PlanError, load_plan, make_plan, render_tasks, revise_plan, revision_section, save_plan
 from runtime import build_registry
 from state import BuildState, load_state, save_state
-from tracing import NullTracer
+from tracing import NullTracer, RoleModel
+from compaction import CompactingModel
 from replies import NormalizingModel
 from memory import error_signature, project_map, render_fix_lessons, render_review_lessons
 from context import (CHARS_PER_TOKEN, OutputLimiter, Section, allocate, estimate_tokens, rank_files,
@@ -175,20 +176,35 @@ def build_graph(ctx: Context) -> Graph:
     cfg_judge = ctx.config.get("judge", {})
     cfg_memory = ctx.config.get("memory", {})
     cfg_context = ctx.config.get("context", {})
+    cfg_compaction = ctx.config.get("compaction", {})
     P = ctx.prompts
     max_tasks = cfg_plan.get("max_tasks", 12)
     load_limit = max_tasks * 2              # revisions may add tasks (Stage 10)
     max_fix = cfg_verify.get("max_fix_attempts", 2)
     max_revisions = cfg_judge.get("max_revisions", 2)
 
-    def loop_model():
-        """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}) into the JSON action."""
-        if not ctx.config.get("replies", {}).get("normalize", True):
-            return ctx.model
+    def loop_model(label: str):
+        """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}), then compact (Chapter D)."""
+        base = ctx.model
+        if ctx.config.get("replies", {}).get("normalize", True):
+            def on_normalize(how: str, raw: str) -> None:
+                ctx.tracer.event("normalized", format=how, raw=raw[:300])
+            base = NormalizingModel(ctx.model, on_normalize=on_normalize)
+        if not cfg_compaction.get("enabled", True):
+            return base
 
-        def on_normalize(how: str, raw: str) -> None:
-            ctx.tracer.event("normalized", format=how, raw=raw[:300])
-        return NormalizingModel(ctx.model, on_normalize=on_normalize)
+        def on_compact(e: dict) -> None:
+            ctx.tracer.event("compaction", **e)
+            ctx.say(f"[compact] {label}: steps {e['from_step']}–{e['to_step']} summarised "
+                    f"({e['tokens_before'] / 1000:.1f}k → {e['tokens_after'] / 1000:.1f}k tok)")
+        return CompactingModel(
+            base, window_tokens=cfg_context.get("window_tokens", 16000),
+            call_fraction=cfg_compaction.get("call_fraction", 0.85), compact_at=cfg_compaction.get("compact_at", 0.75),
+            target=cfg_compaction.get("target", 0.5), ceiling=cfg_compaction.get("ceiling", 0.95),
+            keep_recent_steps=cfg_compaction.get("keep_recent_steps", 2),
+            note=P["compact_note"], mode=cfg_compaction.get("mode", "extractive"),
+            summarizer=RoleModel(ctx.model, ctx.tracer, "compactor"), summarizer_system=P["compact_system"],
+            on_compact=on_compact)
 
     def intake(s: BuildState) -> None:
         if s.run_dir:
@@ -235,7 +251,7 @@ def build_graph(ctx: Context) -> Graph:
             _append_jsonl(run.transcript, {"event": "resume", "at": _now(), "existing_files": len(existing)})
         s.status = "building"
         s.summary = execute_build(
-            run, loop_model(), ctx.registry(run.workspace), P["react_system"] + "\n\n" + P["build_rules"], first,
+            run, loop_model("build"), ctx.registry(run.workspace), P["react_system"] + "\n\n" + P["build_rules"], first,
             max_iterations=s.options.get("max_iterations") or cfg_build.get("max_iterations", 40),
             format_reminder=P["format_reminder"], on_step=ctx.on_step, plan_info=None)
         s.status, s.error = s.summary["status"], s.summary.get("error")
@@ -342,7 +358,7 @@ def build_graph(ctx: Context) -> Graph:
                 first += "\n\n" + texts[extra]
 
         result = execute_build(
-            run, loop_model(), ctx.registry(run.workspace),
+            run, loop_model(task["id"]), ctx.registry(run.workspace),
             P["react_system"] + "\n\n" + P["task_rules"], first,
             max_iterations=cfg_build.get("task_max_iterations", 20),
             format_reminder=P["format_reminder"], on_step=ctx.on_step,

@@ -251,5 +251,15 @@
     "=== RELEVANT FILES (current content) ===",
     "{relevant_files}",
     ""
+  ],
+  "compact_note": [
+    "=== EARLIER STEPS IN THIS TASK (summarised to save space) ===",
+    "{summary}",
+    "The steps after this summary are shown in full. Do not repeat what already failed."
+  ],
+  "compact_system": [
+    "You summarise the earlier steps of a coding agent working on one task, so it can continue without the full history.",
+    "Write a compact summary (at most 15 lines) with: what was tried, what failed and why (exact error lines), which files exist and what they contain now, and the current state.",
+    "Use only facts from the input. Do not give advice or next steps. Plain text, no JSON."
   ]
 }

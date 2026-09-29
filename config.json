@@ -76,6 +76,15 @@
       "resume": 0.03
     }
   },
+  "compaction": {
+    "enabled": true,
+    "call_fraction": 0.85,
+    "compact_at": 0.75,
+    "target": 0.5,
+    "keep_recent_steps": 2,
+    "mode": "extractive",
+    "ceiling": 0.95
+  },
   "replies": {
     "normalize": true
   }

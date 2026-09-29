@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Chapter B: Memory](../../chapters/B-memory/README.md) · [Index](../../README.md) · Chapter D: Compaction →
+[← Chapter B: Memory](../../chapters/B-memory/README.md) · [Index](../../README.md) · [Chapter D: Compaction →](../../chapters/D-compaction/README.md)
 
 ## Read this when
 
@@ -199,4 +199,4 @@ chapter C: context budget — fractional sections (water-filling), relevant file
 
 ---
 
-[← Chapter B: Memory](../../chapters/B-memory/README.md) · [Index](../../README.md) · Chapter D: Compaction →
+[← Chapter B: Memory](../../chapters/B-memory/README.md) · [Index](../../README.md) · [Chapter D: Compaction →](../../chapters/D-compaction/README.md)
