@@ -201,8 +201,10 @@ def print_summary(s: dict) -> None:
     if s.get("plan"):
         print(f"plan     : {s['plan']['title']} ({s['plan']['tasks']} tasks)")
     for t in s.get("tasks", []):
-        mark = {"done": "✓", "failed": "✗", "blocked": "–"}.get(t["status"], "·")
+        mark = {"done": "✓", "failed": "✗", "blocked": "–", "dropped": "~"}.get(t["status"], "·")
         err = f"  ({t['error']})" if t.get("error") else ""
+        if t["status"] == "dropped" and t.get("dropped_in"):
+            err = f"  (dropped in round {t['dropped_in']})"
         stuck = f"  ⚠ looked stuck {t['stuck']:.2f}" if (t.get("stuck") or 0) >= 0.5 else ""
         print(f"   {mark} {t['id']:<4} {t['title'][:40]:<40} {t['status']:<8} {t['steps']:>3} steps{err}{stuck}")
     if s.get("final_checks"):

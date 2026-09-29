@@ -32,7 +32,7 @@ from judge import (apply_rules, final_checks_evidence, make_verdict, render_repo
 from graph import END, Graph
 from loop import Step
 from planner import PlanError, load_plan, make_plan, render_tasks, revise_plan, revision_section, save_plan
-from runtime import build_registry
+from runtime import allowed_programs, build_registry
 from state import BuildState, load_state, save_state
 from tracing import NullTracer, RoleModel
 from compaction import CompactingModel
@@ -44,8 +44,9 @@ from context import (CHARS_PER_TOKEN, OutputLimiter, Section, allocate, estimate
                      relevant_files)
 
 RESUMABLE_ENDED = {"error", "interrupted"}
-FINISHED_TASK = {"done", "failed", "blocked"}
-STATUS_MARK = {"done": "[x]", "in_progress": "[>]", "pending": "[ ]", "failed": "[!]", "blocked": "[-]"}
+FINISHED_TASK = {"done", "failed", "blocked", "dropped"}
+STATUS_MARK = {"done": "[x]", "in_progress": "[>]", "pending": "[ ]", "failed": "[!]", "blocked": "[-]",
+               "dropped": "[~]"}
 SUM_FIELDS = ("steps", "malformed", "model_calls", "approx_tokens_in", "approx_tokens_out")
 
 
@@ -166,7 +167,7 @@ def aggregate(run, plan: dict, status: str) -> dict:
         "answer": answer or None,
         "error": "; ".join(f"{t['id']} {t['status']}: {t.get('error', '')}" for t in failed) or None,
         "tasks": [{"id": t["id"], "title": t["title"], "status": t["status"],
-                   "steps": t.get("steps", 0), "error": t.get("error"),
+                   "steps": t.get("steps", 0), "error": t.get("error"), "dropped_in": t.get("dropped_in"),
                    "stuck": (t.get("signals") or {}).get("peak_stuck")} for t in plan["tasks"]],
         **{k: totals[k] for k in ("steps", "malformed")},
         "tool_calls": dict(tools),
@@ -224,6 +225,7 @@ def build_graph(ctx: Context) -> Graph:
     load_limit = max_tasks * 2              # revisions may add tasks (Stage 10)
     max_fix = cfg_verify.get("max_fix_attempts", 2)
     max_revisions = cfg_judge.get("max_revisions", 2)
+    allowed = allowed_programs(ctx.config)          # Chapter I: checks may only start with these programs
 
     def loop_model(label: str):
         """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}), then compact (Chapter D)."""
@@ -283,7 +285,7 @@ def build_graph(ctx: Context) -> Graph:
             p = make_plan(ctx.model_for("planner"), P, s.request, ask=ctx.ask,
                           max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
                           max_questions=cfg_plan.get("max_questions", 3),
-                          log=lambda e: _append_jsonl(run_dir / "planner.jsonl", e), notes=notes)
+                          log=lambda e: _append_jsonl(run_dir / "planner.jsonl", e), notes=notes, allowed=allowed)
         except PlanError as e:
             s.status, s.error = "plan_failed", str(e)
             return
@@ -316,7 +318,7 @@ def build_graph(ctx: Context) -> Graph:
         for t in s.plan["tasks"]:
             if t["status"] in FINISHED_TASK:
                 continue
-            bad = [d for d in t["depends_on"] if status.get(d) in ("failed", "blocked")]
+            bad = [d for d in t["depends_on"] if status.get(d) in ("failed", "blocked", "dropped")]
             if bad:
                 t["status"], t["error"] = "blocked", f"blocked by {', '.join(bad)}"
                 status[t["id"]] = "blocked"
@@ -558,7 +560,7 @@ def build_graph(ctx: Context) -> Graph:
                 ctx.model_for("reviser"), P, request=s.request, plan=s.plan, spec=s.spec or "",
                 plan_status=plan_status(s.plan), verdict=verdict, files=_files_listing(run.workspace),
                 round_no=round_no, max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
-                log=lambda e: _append_jsonl(run.dir / "planner.jsonl", e))
+                log=lambda e: _append_jsonl(run.dir / "planner.jsonl", e), allowed=allowed)
         except PlanError as e:
             verdict["overrides"].append({"from": "revise", "to": "escalate", "reason": f"revision failed: {e}"})
             verdict["verdict"] = "escalate"
@@ -572,13 +574,17 @@ def build_graph(ctx: Context) -> Graph:
         s.spec = (run.dir / "SPEC.md").read_text(encoding="utf-8")
         _append_jsonl(run.transcript, {"event": "revision", **record})
         ctx.say(f"[revise] {record['changes'] or 'plan updated'} — retry: {', '.join(record['retry']) or 'none'}; "
-                f"new: {', '.join(record['added']) or 'none'}")
+                f"new: {', '.join(record['added']) or 'none'}; dropped: {', '.join(record.get('dropped', [])) or 'none'}")
+        active = sum(1 for t in new_plan["tasks"] if t["status"] != "dropped")
+        if active >= load_limit - 3:
+            ctx.say(f"[plan] {active} of {load_limit} task slots used. Close to the limit: drop tasks that were "
+                    "replaced, or start a new run with a fuller request")
 
     def finish(s: BuildState) -> None:
         run = open_run(Path(s.run_dir))
         if s.plan is not None and s.status != "plan_failed":
             s.plan, _ = load_plan(run.dir, load_limit)
-            all_done = all(t["status"] == "done" for t in s.plan["tasks"])
+            all_done = all(t["status"] in ("done", "dropped") for t in s.plan["tasks"])   # dropped: Chapter I
             regressions = [c for c in (s.final_checks or []) if not c["ok"]]
             last = s.verdicts[-1] if s.verdicts else None
             judged = last is not None and last.get("source") != "human"     # a --fix without a judge after it

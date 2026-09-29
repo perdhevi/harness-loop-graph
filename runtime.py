@@ -29,6 +29,18 @@ def prompt_text(prompts: dict, key: str) -> str:
     return "\n".join(value) if isinstance(value, list) else value
 
 
+def allowed_programs(config: dict) -> set[str] | None:
+    """The programs the workspace server may run (its --allow list in mcp.json), or None if unknown."""
+    mcp = config.get("tools", {}).get("mcp")
+    if not mcp:
+        return None
+    try:
+        args = load_json(ROOT / mcp).get("servers", {}).get("workspace", {}).get("args", [])
+        return {p.strip().lower() for p in args[args.index("--allow") + 1].split(",") if p.strip()}
+    except (OSError, ValueError, IndexError, json.JSONDecodeError):
+        return None
+
+
 def build_registry(config: dict, workspace: Path, stack: contextlib.ExitStack) -> ToolRegistry:
     """Local tools + one source per enabled MCP server. Servers close when `stack` closes."""
     registry = ToolRegistry()

@@ -17,13 +17,14 @@ from loop import ParseError, _first_json_object
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 LIST_FIELDS = ("features", "tech", "constraints", "out_of_scope", "assumptions")
-TASK_STATUSES = {"pending", "in_progress", "done", "failed", "blocked"}
+TASK_STATUSES = {"pending", "in_progress", "done", "failed", "blocked", "dropped"}   # dropped: Chapter I
 # progress fields written by the harness (Stage 8); kept when a plan is re-validated
 PROGRESS_FIELDS = ("handoff", "error", "steps", "malformed", "tool_calls", "duration_s",
                    "model_calls", "approx_tokens_in", "approx_tokens_out",
                    "checks", "verified", "fix_attempts", "fix_pending", "attempt_open",   # + Stage 9
                    "lessons_shown",                                                        # + Chapter B
-                   "signals", "sensor_state", "sensor_warned")                             # + Chapter E
+                   "signals", "sensor_state", "sensor_warned",                             # + Chapter E
+                   "dropped_in")                                                           # + Chapter I
 
 Asker = Callable[[list[str]], list[str]]   # questions -> answers
 
@@ -88,8 +89,10 @@ def validate_plan(obj, max_tasks: int = 15) -> tuple[dict, list[str]]:
     if not isinstance(raw_tasks, list) or not raw_tasks:
         errors.append("'tasks' must be a non-empty list")
         raw_tasks = []
-    elif len(raw_tasks) > max_tasks:
-        errors.append(f"too many tasks ({len(raw_tasks)}); use at most {max_tasks}")
+    elif sum(1 for t in raw_tasks if not (isinstance(t, dict) and t.get("status") == "dropped")) > max_tasks:
+        active = sum(1 for t in raw_tasks if not (isinstance(t, dict) and t.get("status") == "dropped"))
+        errors.append(f"too many tasks ({active}); use at most {max_tasks}"
+                      + (" (dropped tasks don't count)" if active < len(raw_tasks) else ""))
 
     tasks: list[dict] = []
     seen: set[str] = set()
@@ -205,8 +208,17 @@ SHELL_TOKENS = {"&&", "||", "|", ">", ">>", "<", ";", "2>&1", "&"}
 _KEYLESS_DONE_WHEN = re.compile(r'("done_when"\s*:\s*\{)\s*("(?:[^"\\]|\\.)*")\s*\}')
 
 
-def command_problems(tasks: list[dict]) -> list[str]:
-    """Checks run without a shell (Chapter I): `a && b` or `x > file` can never pass, so reject them early."""
+def _program(word: str) -> str:
+    name = word.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def command_problems(tasks: list[dict], allowed: set[str] | None = None) -> list[str]:
+    """Checks run without a shell (Chapter I): `a && b` or `x > file` can never pass, so reject them early.
+
+    `allowed`: the programs the workspace server may run; a check that starts with anything else
+    (echo, cat, ls …) can't even start.
+    """
     problems = []
     for t in tasks:
         cmd = (t.get("done_when") or {}).get("command")
@@ -216,6 +228,10 @@ def command_problems(tasks: list[dict]) -> list[str]:
             words = shlex.split(cmd)
         except ValueError as e:
             problems.append(f"task {t.get('id')}: done_when.command can't be split into words ({e}); check its quotes")
+            continue
+        if allowed and words and _program(words[0]) not in allowed:
+            problems.append(f"task {t.get('id')}: done_when.command starts with '{words[0]}', which checks can't run; "
+                            f"use one of: {', '.join(sorted(allowed))} (e.g. python -m pytest -q), and make it test the work")
             continue
         bad = sorted({w for w in words if w in SHELL_TOKENS or w.startswith((">", "2>"))})
         if bad:
@@ -241,6 +257,7 @@ def make_plan(
     max_questions: int = 3,
     log: Callable[[dict], None] | None = None,
     notes: str | None = None,
+    allowed: set[str] | None = None,
 ) -> dict:
     """Call the planner until it returns a valid plan. Raises PlanError if it can't.
 
@@ -288,7 +305,7 @@ def make_plan(
                     continue
             else:
                 plan, last_errors = validate_plan(obj, max_tasks)
-                last_errors = last_errors or command_problems(plan["tasks"])
+                last_errors = last_errors or command_problems(plan["tasks"], allowed)
                 if not last_errors:
                     plan["clarifications"] = clarifications
                     entry["ok"] = True
@@ -332,6 +349,25 @@ def load_plan(run_dir: Path, max_tasks: int = 15) -> tuple[dict, str]:
 # ---------------------------------------------------------------- Stage 10: revise
 
 RESETTABLE = {"failed", "blocked"}
+DROPPABLE = {"failed", "blocked", "pending"}
+
+
+def _drop(tasks: list[dict], ids: list[str]) -> list[str]:
+    """Mark tasks dropped, plus every unfinished task that depends on one. Returns all dropped ids."""
+    dropped = set(ids)
+    changed = True
+    while changed:
+        changed = False
+        for t in tasks:
+            if t["id"] not in dropped and t["status"] != "done" and any(d in dropped for d in t["depends_on"]):
+                dropped.add(t["id"])
+                changed = True
+    for t in tasks:
+        if t["id"] in dropped:
+            t["status"] = "dropped"
+            for k in ("fix_pending", "error"):
+                t.pop(k, None)
+    return [t["id"] for t in tasks if t["id"] in dropped]
 
 
 def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
@@ -346,6 +382,16 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
     if not isinstance(new_tasks, list):
         errors.append("'tasks' must be a list")
         new_tasks = []
+    drop = obj.get("drop", []) or []
+    if not isinstance(drop, list) or not all(isinstance(x, str) for x in drop):
+        errors.append("'drop' must be a list of task ids")
+        drop = []
+    for tid in drop:
+        if tid not in by_id:
+            errors.append(f"drop: unknown task '{tid}'")
+        elif by_id[tid]["status"] not in DROPPABLE:
+            errors.append(f"drop: task '{tid}' is {by_id[tid]['status']}; only failed, blocked or pending tasks can be dropped")
+    retry = [x for x in retry if x not in drop]
     new_ids = {t.get("id") for t in new_tasks if isinstance(t, dict)}
     retry = [x for x in retry if x not in new_ids]      # Chapter I: new task ids listed under retry too — just drop them
     done_checks = {json.dumps(t["done_when"], sort_keys=True): t["id"] for t in plan["tasks"] if t["status"] == "done"}
@@ -355,8 +401,9 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
             if same and "test" not in str(t["done_when"].get("command", "")):   # a test suite grows; that's fine
                 errors.append(f"task {t.get('id')}: its done_when is the same check as {same}, which already passes, "
                               "so it can't show the new work is done; give it a check that tests the change")
-    if not retry and not new_tasks:
-        errors.append("change something: list task ids under 'retry' and/or new tasks under 'tasks'")
+    if not retry and not new_tasks and not drop:
+        errors.append("change something: list task ids under 'retry', new tasks under 'tasks', "
+                      "and/or replaced tasks under 'drop'")
     for tid in retry:
         if tid not in by_id:
             errors.append(f"retry: unknown task '{tid}'")
@@ -364,6 +411,7 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
             errors.append(f"retry: task '{tid}' is {by_id[tid]['status']}; only failed or blocked tasks can be retried "
                           "(add a new task to change finished work)")
     merged = json.loads(json.dumps(plan))           # deep copy
+    merged["_dropped"] = _drop(merged["tasks"], [x for x in drop if x in by_id and by_id[x]["status"] in DROPPABLE])
     for t in merged["tasks"]:
         if t["id"] in retry or (retry and t["status"] == "blocked"):
             t["status"] = "pending"
@@ -381,11 +429,13 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
 
 def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spec: str, plan_status: str,
                 verdict: dict, files: str, round_no: int, max_attempts: int = 3, max_tasks: int = 15,
-                log: Callable[[dict], None] | None = None) -> tuple[dict, dict]:
+                log: Callable[[dict], None] | None = None, allowed: set[str] | None = None) -> tuple[dict, dict]:
     """Turn judge feedback into plan changes. Returns (new plan, change record)."""
     retryable = ", ".join(t["id"] for t in plan["tasks"] if t["status"] in RESETTABLE) or "(none: add new tasks)"
+    active = sum(1 for t in plan["tasks"] if t["status"] != "dropped")
     message = (prompts["revise_request"]
                .replace("{retryable}", retryable)
+               .replace("{slots}", f"{active} of {max_tasks * 2}")
                .replace("{request}", request).replace("{spec}", spec.strip())
                .replace("{plan_status}", plan_status)
                .replace("{feedback}", verdict.get("feedback") or "(none)")
@@ -397,20 +447,24 @@ def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spe
         raw = model.complete(prompts["revise_system"], messages)
         messages.append({"role": "assistant", "content": raw if raw.strip() else "(empty reply)"})
         try:
-            obj = _parse(raw, ("changes", "retry", "tasks"))
+            obj = _parse(raw, ("changes", "retry", "tasks", "drop"))
         except ParseError as e:
             errors = [f"no JSON object in the reply ({e})"]
         else:
             merged, errors = _apply_revision(plan, obj)
             if not errors:
+                dropped = merged.pop("_dropped", [])
+                for t in merged["tasks"]:
+                    if t["id"] in dropped:
+                        t["dropped_in"] = round_no
                 new_plan, errors = validate_plan(merged, max_tasks * 2)
                 known = {t["id"] for t in plan["tasks"]}
-                errors = errors or command_problems([t for t in new_plan["tasks"] if t["id"] not in known])
+                errors = errors or command_problems([t for t in new_plan["tasks"] if t["id"] not in known], allowed)
                 if not errors:
                     new_plan["clarifications"] = plan.get("clarifications", [])
-                    known = {t["id"] for t in plan["tasks"]}
                     record = {"round": round_no, "changes": str(obj.get("changes", "")),
-                              "retry": [x for x in (obj.get("retry") or []) if x in known],
+                              "retry": [x for x in (obj.get("retry") or []) if x in known and x not in dropped],
+                              "dropped": dropped,
                               "added": [t["id"] for t in new_plan["tasks"] if t["id"] not in known]}
                     if log:
                         log({"revision": round_no, "attempt": attempt, "raw": raw, "ok": True})
@@ -429,6 +483,8 @@ def revision_section(record: dict, verdict: dict, plan: dict) -> str:
              f"**Changes:** {record['changes'] or '(not described)'}", ""]
     if record["retry"]:
         lines += [f"**Retried:** {', '.join(record['retry'])}", ""]
+    if record.get("dropped"):
+        lines += [f"**Dropped (replaced or no longer needed):** {', '.join(record['dropped'])}", ""]
     if added:
         lines += ["| ID | Task | Depends on | Done when |", "|---|---|---|---|"]
         for t in added:

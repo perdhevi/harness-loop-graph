@@ -201,6 +201,7 @@
     "{",
     "  \"changes\": \"one line: what will change\",",
     "  \"retry\": [\"ids of failed or blocked tasks to run again\"],",
+    "  \"drop\": [\"ids of failed, blocked or pending tasks that your new tasks replace, or that are no longer needed\"],",
     "  \"tasks\": [ {\"id\": \"R1-1\", \"title\": \"...\", \"description\": \"what to do\", \"files\": [\"...\"],",
     "              \"depends_on\": [\"existing or new task ids\"], \"done_when\": {\"command\": \"...\"} or {\"file\": \"...\"}} ]",
     "}",
@@ -209,6 +210,7 @@
     "- New task ids use the prefix given in the request and must not clash with existing ids.",
     "- You cannot retry a task that is done; add a new task to change finished work.",
     "- 'retry' is only for existing tasks that failed or are blocked (the request lists them). New tasks go only under 'tasks', never under 'retry'.",
+    "- When your new tasks replace old failed or blocked ones, list the old ids under 'drop'. Dropped tasks (and unfinished tasks that depend on them) stop counting against the result and the task limit.",
     "- done_when is always an object with a key: {\"command\": \"python -m pytest -q\"} or {\"file\": \"README.md\"}. A new task's check must test the change it makes.",
     "- Every command, and every run of a CLI program, is a separate process: state that must survive between commands has to be saved to a file.",
     "- Every new task needs a checkable done_when. Commands run without a shell; only python, python3, pytest, pip, node and npm are available.",
@@ -234,6 +236,7 @@
     "{files}",
     "",
     "Tasks you can retry (failed or blocked): {retryable}",
+    "Task slots used: {slots}",
     "",
     "New task ids must start with {prefix}. Return the changes as one JSON object."
   ],
