@@ -26,6 +26,7 @@ class BuildState:
     final_checks: list | None = None
     verdicts: list = field(default_factory=list)     # Stage 10: every judge verdict, in order
     revisions: int = 0
+    revision_base: int = 0                           # --fix: the judge's revision budget counts from here
     lessons_shown: list = field(default_factory=list)   # Chapter B: review lessons given to the planner
     summary: dict | None = None
     error: str | None = None

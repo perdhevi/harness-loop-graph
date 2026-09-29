@@ -23,6 +23,7 @@ export ANTHROPIC_API_KEY=...
 
 # Then read the result
 cat runs/<id>/REPORT.md
+python main.py build --fix runs/<id> "list crashes on an empty file"   # change a finished run
 python main.py trace runs/<id>
 
 # Measure: replay the benchmark and compare with your baseline
@@ -84,8 +85,9 @@ Read and build these when their symptom appears. Order is a suggestion, apart fr
 | D | [Compaction](chapters/D-compaction/README.md) | Long tasks forget what they already tried, or history gets cut off once it no longer fits. | Chapter C (context management) — compaction is triggered by its token budget | ✅ done |
 | E | [Sensors](chapters/E-sensors/README.md) | Tasks go in circles: rewriting the same file, hitting the same test failure, making no progress until they run out of steps. | Stage 08 (task execution), Stage 09 (verification) | ✅ done |
 | F | [Persistence & benchmark](chapters/F-benchmark-regression/README.md) | You changed the harness and can't tell whether it got better or worse. | Stage 10 (judge) for verdicts | ✅ done |
+| G | [Fixing a finished run](chapters/G-fix-run/README.md) | A build finished, but something is missing or wrong, and you want to change that run instead of starting over. | Stage 10 (judge) | ✅ done |
 
-Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands.
+Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands. Chapter G adds `build --fix`.
 
 **Fixed dependencies inside Part 2:** C (context management) before D (compaction). A (tracing) is worth reading as soon as Stage 02 is done.
 

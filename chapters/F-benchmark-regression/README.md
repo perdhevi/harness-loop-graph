@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Chapter E: Sensors](../../chapters/E-sensors/README.md) · [Index](../../README.md)
+[← Chapter E: Sensors](../../chapters/E-sensors/README.md) · [Index](../../README.md) · [Chapter G: Fixing a finished run →](../../chapters/G-fix-run/README.md)
 
 ## Read this when
 
@@ -185,4 +185,4 @@ chapter F: run index + bench — suite with human acceptance scripts, baselines,
 
 ---
 
-[← Chapter E: Sensors](../../chapters/E-sensors/README.md) · [Index](../../README.md)
+[← Chapter E: Sensors](../../chapters/E-sensors/README.md) · [Index](../../README.md) · [Chapter G: Fixing a finished run →](../../chapters/G-fix-run/README.md)
