@@ -14,7 +14,9 @@ Usage:
     python main.py build --max-iterations 60 "..."
     python main.py trace runs/<id> [--steps]       # read a build's trace (Chapter A)
     python main.py memory [--query "..."]          # lessons from past builds (Chapter B)
+    python main.py runs [--last 20]                # every finished run, from runs/index.jsonl (Chapter F)
     python main.py doctor                          # check settings, workspace server, model and reply format
+    python main.py bench benchmarks/core.json [--label L] [--provider P --model M] [--save-baseline]
 
     python main.py "What is (17 * 23) + 4, and is it prime?"     # question mode (Stages 2–4)
     python main.py --workspace ./scratch "Write hello.py and run it"
@@ -131,10 +133,14 @@ def make_store(config: dict) -> LessonStore | None:
 
 def run_build(request: str | None, max_iterations: int | None = None, *, model=None,
               ask=None, review: bool = False, from_run: str | None = None, no_plan: bool = False,
-              judge: bool | None = None, verbose_graph: bool = True) -> dict:
-    """Plan and build through the graph. `from_run` resumes a paused or stopped run."""
-    config = load_json(CONFIG_PATH)
-    check_context_settings(config)
+              judge: bool | None = None, verbose_graph: bool = True, config: dict | None = None,
+              tags: dict | None = None, quiet: bool = False) -> dict:
+    """Plan and build through the graph. `from_run` resumes a paused or stopped run.
+
+    `config` overrides config.json (Chapter F: benchmarks pick provider/model); `tags` go to the run index.
+    """
+    config = config or load_json(CONFIG_PATH)
+    check_context_settings(config, say=(lambda m: None) if quiet else print)
     prompts = load_json(PROMPTS_PATH)
     provider = config["provider"]
     ctx = Context(
@@ -143,14 +149,16 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
         prompts={k: prompt_text(prompts, k) for k in prompts},
         runs_dir=ROOT / config.get("build", {}).get("runs_dir", "runs"),
         ask=ask,
-        on_step=print_step,
+        on_step=None if quiet else print_step,
+        say=(lambda msg: None) if quiet else print,
         meta={"provider": provider, "model": config["providers"][provider].get("model")},
         tracer=Tracer() if config.get("trace", {}).get("enabled", True) else NullTracer(),
         memory=make_store(config),
     )
     on_enter = (lambda name, state: print(f"[graph] → {name}")) if verbose_graph else None
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
-                        max_iterations=max_iterations, judge=judge, on_enter=on_enter)
+                        max_iterations=max_iterations, judge=judge, tags=tags,
+                        on_enter=None if quiet else on_enter)
 
 
 def print_summary(s: dict) -> None:
@@ -305,6 +313,81 @@ def main_memory(argv: list[str]) -> int:
     return 0
 
 
+def _dash(v) -> str:
+    return "—" if v is None else str(v)
+
+
+def main_runs(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="main.py runs", description="List finished runs (Chapter F)")
+    parser.add_argument("--last", type=int, default=20)
+    args = parser.parse_args(argv)
+    path = ROOT / load_json(CONFIG_PATH).get("build", {}).get("runs_dir", "runs") / "index.jsonl"
+    if not path.exists():
+        print("No finished runs yet.")
+        return 0
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()][-args.last:]
+    print(f"{'run':<44} {'model':<18} {'status':<10} {'tasks':>5} {'steps':>6} {'tok in':>8} {'time s':>7}  bench")
+    for r in rows:
+        tasks = f"{r.get('tasks_done', 0)}/{r.get('tasks', 0)}"
+        bench = f"{r['bench']['suite']}/{r['bench']['case']}" if r.get("bench") else ""
+        print(f"{r['id'][:44]:<44} {str(r.get('model'))[:18]:<18} {r['status']:<10} {tasks:>5} "
+              f"{_dash(r.get('steps')):>6} {_dash(r.get('tokens_in')):>8} {_dash(r.get('duration_s')):>7}  {bench}")
+    return 0
+
+
+def main_bench(argv: list[str]) -> int:
+    import copy
+    from bench import (SuiteError, baseline_path, compare, load_suite, render_compare, render_results,
+                       run_suite, safe_label, save_baseline)
+    parser = argparse.ArgumentParser(prog="main.py bench", description="Replay a benchmark suite (Chapter F)")
+    parser.add_argument("suite")
+    parser.add_argument("--label", help="names the results and the baseline (default: provider-model)")
+    parser.add_argument("--cases", help="comma-separated case ids")
+    parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--provider")
+    parser.add_argument("--model")
+    parser.add_argument("--no-judge", action="store_true")
+    parser.add_argument("--save-baseline", action="store_true")
+    parser.add_argument("--tolerance", type=float, default=0.0, help="allowed pass-rate drop before it's a regression")
+    args = parser.parse_args(argv)
+    config = copy.deepcopy(load_json(CONFIG_PATH))
+    if args.provider:
+        if args.provider not in config["providers"]:
+            print(f"[error] unknown provider {args.provider!r}; options: {list(config['providers'])}")
+            return 1
+        config["provider"] = args.provider
+    if args.model:
+        config["providers"][config["provider"]]["model"] = args.model
+    label = safe_label(args.label or f"{config['provider']}-{config['providers'][config['provider']].get('model')}")
+    try:
+        suite = load_suite(args.suite)
+    except (SuiteError, OSError, ValueError) as e:
+        print(f"[error] {e}")
+        return 1
+
+    def build_fn(request, **kw):
+        return run_build(request, ask=None, config=config, quiet=True, verbose_graph=False, **kw)
+
+    results = run_suite(suite, build_fn=build_fn, config=config, label=label, repeat=args.repeat,
+                        only=args.cases.split(",") if args.cases else None,
+                        judge=False if args.no_judge else None)
+    print()
+    print(render_results(results))
+    print(f"results  : {results['_path']}")
+    base = baseline_path(suite, label)
+    ok = True
+    if base.exists():
+        report = compare(results, json.loads(base.read_text(encoding="utf-8")), tolerance=args.tolerance)
+        print(render_compare(report, base.name))
+        ok = report["ok"]
+    else:
+        print(f"baseline : none yet for label {label!r} (use --save-baseline)")
+    if args.save_baseline:
+        save_baseline(results, base)
+        print(f"baseline : saved → {base}")
+    return 0 if ok else 1
+
+
 def _safe_console() -> None:
     """Windows: printing ✓ or — to a cp1252 pipe/file raises UnicodeEncodeError; replace instead of crashing."""
     for stream in (sys.stdout, sys.stderr):
@@ -410,6 +493,10 @@ def main(argv: list[str] | None = None) -> int:
         return main_trace(argv[1:])
     if argv[:1] == ["memory"]:
         return main_memory(argv[1:])
+    if argv[:1] == ["runs"]:
+        return main_runs(argv[1:])
+    if argv[:1] == ["bench"]:
+        return main_bench(argv[1:])
 
     parser = argparse.ArgumentParser(description="harness-loop-graph",
                                      epilog="For projects, use: main.py build \"<request>\"")

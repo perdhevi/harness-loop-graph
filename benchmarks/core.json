@@ -1,0 +1,38 @@
+{
+  "name": "core",
+  "judge": true,
+  "cases": [
+    {
+      "id": "greet",
+      "difficulty": 1,
+      "request": "Write a Python script greet.py. `python greet.py Ana` prints exactly `Hello, Ana!`. With no argument, `python greet.py` prints `Hello, world!`. Standard library only.",
+      "acceptance": {
+        "script": "accept/greet.py"
+      }
+    },
+    {
+      "id": "word-stats",
+      "difficulty": 2,
+      "request": "Write a Python CLI stats.py. `python stats.py <file>` prints exactly one line: `<words> words, <lines> lines`, where words are counted with str.split() and lines with str.splitlines() on the whole file. Include pytest tests. Standard library only.",
+      "acceptance": {
+        "script": "accept/word_stats.py"
+      }
+    },
+    {
+      "id": "todo-cli",
+      "difficulty": 3,
+      "request": "Build a Python CLI to-do app todo.py that stores tasks in todo.json in the current folder. Commands: `python todo.py add <text>` prints `added <id>` (ids start at 1); `python todo.py list` prints one line per task as `<id>. [ ] <text>`, or `<id>. [x] <text>` when done, or `(empty)` when there are none; `python todo.py done <id>` prints `done <id>`. Include pytest tests and a README. Standard library only.",
+      "acceptance": {
+        "script": "accept/todo_cli.py"
+      }
+    },
+    {
+      "id": "csv-report",
+      "difficulty": 4,
+      "request": "Write report.py. `python report.py <file.csv>` reads a CSV with a header row `region,amount` and prints one line per region as `<region>: <total>`, where total is the sum of amount with exactly 2 decimals, sorted by total from highest to lowest (ties by region name A-Z). Rows with an empty or non-numeric amount are skipped, and a region with no valid rows is not printed. Include pytest tests. Standard library only.",
+      "acceptance": {
+        "script": "accept/csv_report.py"
+      }
+    }
+  ]
+}

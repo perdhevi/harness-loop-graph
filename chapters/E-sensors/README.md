@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Chapter D: Compaction](../../chapters/D-compaction/README.md) · [Index](../../README.md) · Chapter F: Persistence & benchmark →
+[← Chapter D: Compaction](../../chapters/D-compaction/README.md) · [Index](../../README.md) · [Chapter F: Persistence & benchmark →](../../chapters/F-benchmark-regression/README.md)
 
 ## Read this when
 
@@ -150,4 +150,4 @@ chapter E: sensors — five smooth detectors + noisy-OR stuck score; warning, ju
 
 ---
 
-[← Chapter D: Compaction](../../chapters/D-compaction/README.md) · [Index](../../README.md) · Chapter F: Persistence & benchmark →
+[← Chapter D: Compaction](../../chapters/D-compaction/README.md) · [Index](../../README.md) · [Chapter F: Persistence & benchmark →](../../chapters/F-benchmark-regression/README.md)

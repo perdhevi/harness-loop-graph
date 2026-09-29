@@ -25,6 +25,9 @@ export ANTHROPIC_API_KEY=...
 cat runs/<id>/REPORT.md
 python main.py trace runs/<id>
 
+# Measure: replay the benchmark and compare with your baseline
+python main.py bench benchmarks/core.json --label qwen3-8b --save-baseline
+
 # Tests (no model needed)
 python -m unittest discover -s tests -v
 ```
@@ -80,7 +83,9 @@ Read and build these when their symptom appears. Order is a suggestion, apart fr
 | C | [Context management](chapters/C-context-management/README.md) | Prompts grow too large, or are filled with whole files and long test logs that have nothing to do with the current task. | Stage 07 (graph & state) | ✅ done |
 | D | [Compaction](chapters/D-compaction/README.md) | Long tasks forget what they already tried, or history gets cut off once it no longer fits. | Chapter C (context management) — compaction is triggered by its token budget | ✅ done |
 | E | [Sensors](chapters/E-sensors/README.md) | Tasks go in circles: rewriting the same file, hitting the same test failure, making no progress until they run out of steps. | Stage 08 (task execution), Stage 09 (verification) | ✅ done |
-| F | Persistence & benchmark | You changed the harness and can't tell whether it got better or worse. | Stage 10 (judge) for verdicts | ⬜ planned |
+| F | [Persistence & benchmark](chapters/F-benchmark-regression/README.md) | You changed the harness and can't tell whether it got better or worse. | Stage 10 (judge) for verdicts | ✅ done |
+
+Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands.
 
 **Fixed dependencies inside Part 2:** C (context management) before D (compaction). A (tracing) is worth reading as soon as Stage 02 is done.
 

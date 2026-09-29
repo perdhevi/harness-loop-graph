@@ -37,6 +37,7 @@ from compaction import CompactingModel
 from replies import NormalizingModel
 from sensors import TaskSensors
 from memory import error_signature, project_map, render_fix_lessons, render_review_lessons
+from trace_view import load_events, metrics as trace_metrics
 from context import (CHARS_PER_TOKEN, OutputLimiter, Section, allocate, estimate_tokens, rank_files,
                      relevant_files)
 
@@ -167,6 +168,30 @@ def aggregate(run, plan: dict, status: str) -> dict:
         "duration_s": round(duration, 2),
         **{k: totals[k] for k in ("model_calls", "approx_tokens_in", "approx_tokens_out")},
     }
+
+
+def append_index(ctx: Context, s: BuildState) -> None:
+    """Chapter F: one line per finished run, for comparing across run folders."""
+    summ = s.summary or {}
+    m = summ.get("metrics") or {}
+    tasks = (s.plan or {}).get("tasks", [])
+    row = {
+        "id": s.run_id, "ts": _now(), "request": s.request[:300],
+        "provider": ctx.meta.get("provider"), "model": ctx.meta.get("model"),
+        "status": s.status, "verdict": (summ.get("verdict") or {}).get("verdict"),
+        "tasks": len(tasks), "tasks_done": sum(1 for t in tasks if t.get("status") == "done"),
+        "steps": summ.get("steps"), "revisions": s.revisions, "duration_s": summ.get("duration_s"),
+        "model_calls": m.get("model_calls"), "tokens_in": m.get("tokens_in"), "tokens_out": m.get("tokens_out"),
+        "compactions": m.get("compactions"), "sensor_warnings": m.get("sensor_warnings"),
+        "stuck_max": max(((t.get("signals") or {}).get("peak_stuck") or 0 for t in tasks), default=0),
+        "bench": s.options.get("tags"),
+    }
+    try:
+        ctx.runs_dir.mkdir(parents=True, exist_ok=True)
+        with open(ctx.runs_dir / "index.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass                                   # the index is a convenience; never fail a build over it
 
 
 # ---------------------------------------------------------------- nodes
@@ -569,7 +594,13 @@ def build_graph(ctx: Context) -> Graph:
             s.error = s.summary["error"]
         elif s.summary is None:     # ended before building (plan_failed)
             s.summary = {"id": s.run_id, "status": s.status, "error": s.error, "plan": _plan_info(s.plan)}
+        # Chapter F: totals from the trace, and one row in runs/index.jsonl
+        try:
+            s.summary["metrics"] = trace_metrics(load_events(run.dir))
+        except FileNotFoundError:
+            s.summary["metrics"] = None
         run.summary_file.write_text(json.dumps(s.summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        append_index(ctx, s)
 
     def after_plan(s: BuildState) -> str:
         if s.status == "plan_failed":
@@ -624,6 +655,7 @@ def run_pipeline(
     no_plan: bool = False,
     max_iterations: int | None = None,
     judge: bool | None = None,
+    tags: dict | None = None,
     on_enter: Callable[[str, BuildState], None] | None = None,
 ) -> dict:
     """Start a new build, or resume one from its state.json."""
@@ -645,7 +677,8 @@ def run_pipeline(
     else:
         judge_on = ctx.config.get("judge", {}).get("enabled", True) if judge is None else judge
         state = BuildState(request=request, options={"review": review, "no_plan": no_plan,
-                                                     "max_iterations": max_iterations, "judge": judge_on})
+                                                     "max_iterations": max_iterations, "judge": judge_on,
+                                                     "tags": tags})
         start = None
 
     # Chapter A: wrap from outside — the loop, nodes and tools don't know they're traced

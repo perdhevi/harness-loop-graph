@@ -174,3 +174,22 @@ def render(events: list[dict], *, steps: bool = False) -> str:
             out.append(f"  {fmt_ms(e['duration_ms']):>9}  {what}  — {where}")
     return "\n".join(out).rstrip() + "\n"
 
+
+def metrics(events: list[dict]) -> dict:
+    """Chapter F: totals from a trace, for the run index and benchmarks."""
+    models = [e for e in events if e["type"] == "model"]
+    tools = [e for e in events if e["type"] == "tool"]
+    calls: dict[str, int] = defaultdict(int)
+    for m in models:
+        calls[m["role"]] += 1
+    return {
+        "model_calls": dict(calls),
+        "tokens_in": sum(m["approx_tokens_in"] for m in models),
+        "tokens_out": sum(m["approx_tokens_out"] for m in models),
+        "model_errors": sum(1 for m in models if m.get("error")),
+        "tool_calls": len(tools),
+        "tool_errors": sum(1 for t in tools if not t["ok"]),
+        "compactions": sum(1 for e in events if e["type"] == "compaction"),
+        "sensor_warnings": sum(1 for e in events if e["type"] == "signals" and e.get("warning")),
+        "sessions": len({e["session"] for e in events}),
+    }

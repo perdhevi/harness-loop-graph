@@ -109,7 +109,7 @@ class TracingFlowTests(unittest.TestCase):
         on = self.build("greeter", model=FakeModel(script()), trace=True)
         off = self.build("greeter", model=FakeModel(script()), trace=False)
         self.assertFalse((Path(off["run_dir"]) / "trace.jsonl").exists())
-        timing = {"duration_s", "run_dir", "id", "report"}
+        timing = {"duration_s", "run_dir", "id", "report", "metrics"}   # metrics come from the trace itself
 
         def clean(d):
             return json.loads(json.dumps({k: v for k, v in d.items() if k not in timing}).replace(
