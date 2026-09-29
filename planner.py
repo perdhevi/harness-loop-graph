@@ -20,7 +20,8 @@ TASK_STATUSES = {"pending", "in_progress", "done", "failed", "blocked"}
 # progress fields written by the harness (Stage 8); kept when a plan is re-validated
 PROGRESS_FIELDS = ("handoff", "error", "steps", "malformed", "tool_calls", "duration_s",
                    "model_calls", "approx_tokens_in", "approx_tokens_out",
-                   "checks", "verified", "fix_attempts", "fix_pending", "attempt_open")   # + Stage 9
+                   "checks", "verified", "fix_attempts", "fix_pending", "attempt_open",   # + Stage 9
+                   "lessons_shown")                                                        # + Chapter B
 
 Asker = Callable[[list[str]], list[str]]   # questions -> answers
 
@@ -209,11 +210,17 @@ def make_plan(
     max_tasks: int = 15,
     max_questions: int = 3,
     log: Callable[[dict], None] | None = None,
+    notes: str | None = None,
 ) -> dict:
-    """Call the planner until it returns a valid plan. Raises PlanError if it can't."""
+    """Call the planner until it returns a valid plan. Raises PlanError if it can't.
+
+    `notes` (Chapter B) is extra context appended to the first message, e.g. lessons from past builds.
+    """
     system = prompts["planner_system"].replace("{max_tasks}", str(max_tasks)) \
                                       .replace("{max_questions}", str(max_questions))
     first = prompts["planner_request"].replace("{request}", request)
+    if notes:
+        first += "\n\n" + notes
     messages = [{"role": "user", "content": first}]
     clarifications: list[dict] = []
     asked = False

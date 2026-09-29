@@ -232,5 +232,16 @@
     "{files}",
     "",
     "New task ids must start with {prefix}. Return the changes as one JSON object."
+  ],
+  "lessons_fix": [
+    "=== LESSONS FROM PAST BUILDS (similar failures) ===",
+    "{lessons}",
+    "These worked before in other projects. Use them only if they fit this failure."
+  ],
+  "lessons_plan": [
+    "=== LESSONS FROM PAST BUILDS ===",
+    "Reviews of similar requests found these problems:",
+    "{lessons}",
+    "Make sure the plan covers these points where they apply to this request."
   ]
 }

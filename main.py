@@ -13,6 +13,7 @@ Usage:
     python main.py build --no-judge "..."         # Stage 9 behaviour (checks, no judge)
     python main.py build --max-iterations 60 "..."
     python main.py trace runs/<id> [--steps]       # read a build's trace (Chapter A)
+    python main.py memory [--query "..."]          # lessons from past builds (Chapter B)
     python main.py doctor                          # check settings, workspace server, model and reply format
 
     python main.py "What is (17 * 23) + 4, and is it prime?"     # question mode (Stages 2–4)
@@ -34,6 +35,7 @@ from loop import Step, run_loop
 from model_adapter import ModelError, make_adapter
 from pipeline import Context, RunStopped, run_pipeline
 from tracing import NullTracer, Tracer
+from memory import LessonStore
 from planner import PlanError
 from runtime import CONFIG_PATH, PROMPTS_PATH, ROOT, build_registry, load_json, prompt_text
 from tools.mcp_client import McpError
@@ -118,6 +120,15 @@ def check_context_settings(config: dict, say=print) -> list[str]:
     return warnings
 
 
+def make_store(config: dict) -> LessonStore | None:
+    m = config.get("memory", {})
+    if not m.get("enabled", True):
+        return None
+    return LessonStore(ROOT / m.get("path", "memory/lessons.json"),
+                       half_life_days=m.get("half_life_days", 30), relative_cutoff=m.get("relative_cutoff", 0.5),
+                       min_relevance=m.get("min_relevance", 0.2), recall_chars=m.get("recall_chars", 1500))
+
+
 def run_build(request: str | None, max_iterations: int | None = None, *, model=None,
               ask=None, review: bool = False, from_run: str | None = None, no_plan: bool = False,
               judge: bool | None = None, verbose_graph: bool = True) -> dict:
@@ -135,6 +146,7 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
         on_step=print_step,
         meta={"provider": provider, "model": config["providers"][provider].get("model")},
         tracer=Tracer() if config.get("trace", {}).get("enabled", True) else NullTracer(),
+        memory=make_store(config),
     )
     on_enter = (lambda name, state: print(f"[graph] → {name}")) if verbose_graph else None
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
@@ -262,6 +274,36 @@ def main_trace(argv: list[str]) -> int:
     return 0
 
 
+def main_memory(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="main.py memory", description="List or query lessons (Chapter B)")
+    parser.add_argument("--query", help="show what recall would return for this text, with scores")
+    parser.add_argument("--kind", choices=["fix", "review"], default=None)
+    args = parser.parse_args(argv)
+    store = make_store(load_json(CONFIG_PATH))
+    if store is None:
+        print("Memory is disabled (config: memory.enabled).")
+        return 0
+    lessons = store.load()
+    print(f"{len(lessons)} lesson(s) in {store.path}")
+    if args.query:
+        for kind in ([args.kind] if args.kind else ["fix", "review"]):
+            picked = {x["id"] for x in store.recall(kind, args.query)}
+            print(f"\n{kind} lessons for: {args.query!r}")
+            for score, rel, x in store.score_all(kind, args.query):
+                mark = "→" if x["id"] in picked else " "
+                print(f"  {mark} {x['id']}  score {score:.3f}  relevance {rel:.2f}  shown {x['shown']} helped {x['helped']}"
+                      f"  {(x.get('check') or x['key'])[:60]!r}")
+        return 0
+    now = time.time()
+    for x in lessons:
+        if args.kind and x["kind"] != args.kind:
+            continue
+        age = (now - x["ts"]) / 86400
+        what = x.get("check") or x["key"][:60]
+        print(f"  {x['id']}  {x['kind']:<6}  {age:5.1f} days  shown {x['shown']} helped {x['helped']}  {what!r}")
+    return 0
+
+
 def _safe_console() -> None:
     """Windows: printing ✓ or — to a cp1252 pipe/file raises UnicodeEncodeError; replace instead of crashing."""
     for stream in (sys.stdout, sys.stderr):
@@ -365,6 +407,8 @@ def main(argv: list[str] | None = None) -> int:
         return main_build(argv[1:])
     if argv[:1] == ["trace"]:
         return main_trace(argv[1:])
+    if argv[:1] == ["memory"]:
+        return main_memory(argv[1:])
 
     parser = argparse.ArgumentParser(description="harness-loop-graph",
                                      epilog="For projects, use: main.py build \"<request>\"")

@@ -50,6 +50,15 @@
   "trace": {
     "enabled": true
   },
+  "memory": {
+    "enabled": true,
+    "path": "memory/lessons.json",
+    "half_life_days": 30,
+    "relative_cutoff": 0.5,
+    "min_relevance": 0.2,
+    "recall_chars": 1500,
+    "map_chars": 4000
+  },
   "replies": {
     "normalize": true
   }

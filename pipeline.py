@@ -34,6 +34,7 @@ from runtime import build_registry
 from state import BuildState, load_state, save_state
 from tracing import NullTracer
 from replies import NormalizingModel
+from memory import error_signature, project_map, render_fix_lessons, render_review_lessons
 
 RESUMABLE_ENDED = {"error", "interrupted"}
 FINISHED_TASK = {"done", "failed", "blocked"}
@@ -54,6 +55,7 @@ class Context:
     meta: dict = field(default_factory=dict)
     stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
     tracer: object = field(default_factory=NullTracer)      # Chapter A
+    memory: object = None                                   # Chapter B: LessonStore, or None when off
     _registry: object = None
 
     def registry(self, workspace: Path):
@@ -165,6 +167,7 @@ def build_graph(ctx: Context) -> Graph:
     cfg_plan = ctx.config.get("plan", {})
     cfg_verify = ctx.config.get("verify", {})
     cfg_judge = ctx.config.get("judge", {})
+    cfg_memory = ctx.config.get("memory", {})
     P = ctx.prompts
     max_tasks = cfg_plan.get("max_tasks", 12)
     load_limit = max_tasks * 2              # revisions may add tasks (Stage 10)
@@ -193,12 +196,20 @@ def build_graph(ctx: Context) -> Graph:
             s.plan, s.spec = None, None
             return
         run_dir = Path(s.run_dir)
+        notes = None
+        if ctx.memory is not None:                      # Chapter B: review lessons for similar requests
+            lessons = ctx.memory.recall("review", s.request)
+            if lessons:
+                notes = P["lessons_plan"].replace("{lessons}", render_review_lessons(lessons))
+                s.lessons_shown = [x["id"] for x in lessons]
+                ctx.memory.mark(s.lessons_shown, shown=True)
+                ctx.say(f"[memory] {len(lessons)} review lesson(s) from past builds → planner")
         ctx.say("[plan] asking the planner …")
         try:
             p = make_plan(ctx.model, P, s.request, ask=ctx.ask,
                           max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
                           max_questions=cfg_plan.get("max_questions", 3),
-                          log=lambda e: _append_jsonl(run_dir / "planner.jsonl", e))
+                          log=lambda e: _append_jsonl(run_dir / "planner.jsonl", e), notes=notes)
         except PlanError as e:
             s.status, s.error = "plan_failed", str(e)
             return
@@ -254,9 +265,10 @@ def build_graph(ctx: Context) -> Graph:
         _save_plan_json(run.dir, s.plan)
         s.status = "building"
 
-        # ---- the first message: the task, plus fix details or a resume note when needed
-        files_text = _files_listing(run.workspace)
-        fix_text = resume_text = ""
+        # ---- the first message (Chapter B: the project map instead of a plain file list)
+        files_text = (project_map(run.workspace, max_chars=cfg_memory.get("map_chars", 4000))
+                      if ctx.memory is not None else _files_listing(run.workspace))
+        fix_text = lessons_text = resume_text = ""
         last = task["checks"][-1] if fixing else None
         if fixing:
             fix_text = (P["fix_request"]
@@ -265,6 +277,14 @@ def build_graph(ctx: Context) -> Graph:
                         .replace("{output}", last["output"] or "(no output)")
                         .replace("{n}", str(task.get("fix_attempts", 1)))
                         .replace("{max}", str(max_fix)))
+            if ctx.memory is not None:                  # Chapter B: fixes that worked for similar failures
+                lessons = ctx.memory.recall("fix", error_signature(last["output"] or ""))
+                if lessons:
+                    lessons_text = P["lessons_fix"].replace("{lessons}", render_fix_lessons(lessons))
+                    ids = [x["id"] for x in lessons]
+                    task["lessons_shown"] = list(dict.fromkeys((task.get("lessons_shown") or []) + ids))
+                    ctx.memory.mark(ids, shown=True)
+                    ctx.say(f"[memory] {len(lessons)} fix lesson(s) from past builds → {task['id']}")
         if resuming:
             resume_text = P["build_resume_note"].replace("{files}", _files_listing(run.workspace))
             _append_jsonl(run.transcript, {"event": "resume", "task": task["id"], "at": _now()})
@@ -277,7 +297,7 @@ def build_graph(ctx: Context) -> Graph:
                  .replace("{task_description}", task["description"] or "(no description)")
                  .replace("{task_files}", ", ".join(task["files"]) or "(not specified)")
                  .replace("{task_done_when}", _done_when(task["done_when"])))
-        for extra in (fix_text, resume_text):
+        for extra in (fix_text, lessons_text, resume_text):
             if extra:
                 first += "\n\n" + extra
 
@@ -327,6 +347,14 @@ def build_graph(ctx: Context) -> Graph:
             task.pop("error", None)
             task.pop("fix_pending", None)
             ctx.say(f"[check] {task['id']} ✓ {res.describe()}")
+            if ctx.memory is not None:                  # Chapter B: remember what fixed it
+                failed = [c for c in task["checks"][:-1] if not c["ok"]]
+                if failed and task.get("fix_attempts", 0) > 0:
+                    lesson = ctx.memory.add_fix(failure_output=failed[-1]["output"] or "", check=failed[-1]["target"],
+                                                fix_note=task.get("handoff") or "", task=task["title"],
+                                                request=s.request, run_id=s.run_id)
+                    ctx.say(f"[memory] lesson {lesson['id']} saved: fix for `{failed[-1]['target']}`")
+                ctx.memory.mark(task.pop("lessons_shown", []), helped=True)
         elif task.get("fix_attempts", 0) < max_fix:
             task["fix_attempts"] = task.get("fix_attempts", 0) + 1
             task["fix_pending"] = True
@@ -335,6 +363,7 @@ def build_graph(ctx: Context) -> Graph:
             task["status"], task["verified"] = "failed", False
             task["error"] = f"check failed after {task.get('fix_attempts', 0)} fix attempts: {res.describe()}"
             task.pop("fix_pending", None)
+            task.pop("lessons_shown", None)             # shown, didn't help: `shown` already counted
             ctx.say(f"[check] {task['id']} ✗ {res.describe()} → failed")
         _save_plan_json(run.dir, s.plan)
 
@@ -379,6 +408,10 @@ def build_graph(ctx: Context) -> Graph:
         s.verdicts.append(v)
         met = sum(1 for r in v["requirements"] if r["met"])
         ctx.say(f"[judge] {v['verdict']}  ({met}/{len(v['requirements'])} requirements met)")
+        if ctx.memory is not None and v["verdict"] == "revise" and not v["overrides"]:   # Chapter B
+            lesson = ctx.memory.add_review(request=s.request, feedback=v.get("feedback", ""),
+                                           problems=v.get("problems", []), run_id=s.run_id)
+            ctx.say(f"[memory] lesson {lesson['id']} saved: review feedback")
         ctx.tracer.event("verdict", verdict=v["verdict"], met=met, total=len(v["requirements"]),
                          overrides=[f"{o['from']}→{o['to']}" for o in v["overrides"]], round=s.revisions)
         for o in v["overrides"]:
@@ -418,6 +451,9 @@ def build_graph(ctx: Context) -> Graph:
             regressions = [c for c in (s.final_checks or []) if not c["ok"]]
             if s.verdicts:
                 s.status = "accepted" if s.verdicts[-1]["verdict"] == "accept" else "escalated"
+                if ctx.memory is not None and s.status == "accepted" and s.lessons_shown:
+                    ctx.memory.mark(s.lessons_shown, helped=True)
+                    s.lessons_shown = []
             else:
                 s.status = "finished" if all_done and not regressions else "partial"
             s.summary = aggregate(run, s.plan, s.status)

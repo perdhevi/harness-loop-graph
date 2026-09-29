@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[Index](../../README.md) · Chapter B: Memory →
+[Index](../../README.md) · [Chapter B: Memory →](../../chapters/B-memory/README.md)
 
 ## Read this when
 
@@ -161,4 +161,4 @@ chapter A: tracing — trace.jsonl from wrapped model/tools/nodes/steps; main.py
 
 ---
 
-[Index](../../README.md) · Chapter B: Memory →
+[Index](../../README.md) · [Chapter B: Memory →](../../chapters/B-memory/README.md)
