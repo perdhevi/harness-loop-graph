@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done (tested with a scripted fake model — confirm with a real model)
 
-[← Stage 06: Planner: request → spec → tasks](../../stages/06-planner/README.md) · [Index](../../README.md) · Stage 08: Task-by-task execution →
+[← Stage 06: Planner: request → spec → tasks](../../stages/06-planner/README.md) · [Index](../../README.md) · [Stage 08: Task-by-task execution →](../../stages/08-task-execution/README.md)
 
 ## Goal
 
@@ -147,4 +147,4 @@ Running each task separately and tracking task status (Stage 08). Resume in this
 
 ---
 
-[← Stage 06: Planner: request → spec → tasks](../../stages/06-planner/README.md) · [Index](../../README.md) · Stage 08: Task-by-task execution →
+[← Stage 06: Planner: request → spec → tasks](../../stages/06-planner/README.md) · [Index](../../README.md) · [Stage 08: Task-by-task execution →](../../stages/08-task-execution/README.md)

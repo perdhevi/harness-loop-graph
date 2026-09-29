@@ -16,6 +16,10 @@ from loop import ParseError, _first_json_object
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 LIST_FIELDS = ("features", "tech", "constraints", "out_of_scope", "assumptions")
+TASK_STATUSES = {"pending", "in_progress", "done", "failed", "blocked"}
+# progress fields written by the harness (Stage 8); kept when a plan is re-validated
+PROGRESS_FIELDS = ("handoff", "error", "steps", "malformed", "tool_calls", "duration_s",
+                   "model_calls", "approx_tokens_in", "approx_tokens_out")
 
 Asker = Callable[[list[str]], list[str]]   # questions -> answers
 
@@ -131,7 +135,8 @@ def validate_plan(obj, max_tasks: int = 15) -> tuple[dict, list[str]]:
             "files": [f for f in files if isinstance(f, str)],
             "depends_on": [d.strip() for d in deps],
             "done_when": {k: v for k, v in dw.items() if k in ("command", "file")},
-            "status": "pending",
+            "status": t.get("status") if t.get("status") in TASK_STATUSES else "pending",
+            **{k: t[k] for k in PROGRESS_FIELDS if k in t},
         })
 
     for t in tasks:

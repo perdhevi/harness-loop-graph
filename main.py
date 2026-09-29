@@ -1,7 +1,7 @@
 """harness-loop-graph — command line entry point.
 
-Stage 7: `build` runs as a graph — intake → plan → build → finish — with its state
-checkpointed before every node, so a stopped or crashed run can be resumed.
+Stage 8: `build` runs as a graph — intake → plan → (next_task → run_task) → finish.
+Each task of the plan runs in its own ReAct loop, with a fresh conversation.
 
 Usage:
     python main.py build "Build a Python CLI to-do app with add/list/done and pytest tests"
@@ -155,8 +155,14 @@ def print_summary(s: dict) -> None:
         print(f"Stopped: hit the iteration limit ({s['steps']} steps) without a final answer.")
     elif s["status"] == "error":
         print(f"Stopped with an error: {s['error']}")
+    elif s["status"] == "partial":
+        print("Some tasks did not finish (see below).")
     if s.get("plan"):
         print(f"plan     : {s['plan']['title']} ({s['plan']['tasks']} tasks)")
+    for t in s.get("tasks", []):
+        mark = {"done": "✓", "failed": "✗", "blocked": "–"}.get(t["status"], "·")
+        err = f"  ({t['error']})" if t.get("error") else ""
+        print(f"   {mark} {t['id']:<4} {t['title'][:40]:<40} {t['status']:<8} {t['steps']:>3} steps{err}")
     print(f"status   : {s['status']}  (NOT verified: \"done\" means the model said so)")
     print(f"steps    : {s['steps']}  ·  malformed: {s['malformed']}  ·  model calls: {s['model_calls']}")
     tools = ", ".join(f"{k}×{v}" for k, v in sorted(s["tool_calls"].items())) or "none"
@@ -207,7 +213,7 @@ def main_build(argv: list[str]) -> int:
         print(f"[error] {e}")
         return 1
     print_summary(summary)
-    return {"finished": 0, "planned": 0, "max_iterations": 2}.get(summary["status"], 1)
+    return {"finished": 0, "planned": 0, "max_iterations": 2, "partial": 2}.get(summary["status"], 1)
 
 
 def _safe_console() -> None:

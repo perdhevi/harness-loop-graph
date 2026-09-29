@@ -132,7 +132,7 @@ class GemmaBuildTests(unittest.TestCase):
     def build(self, normalize=True):
         config = json.loads((ROOT / "config.json").read_text())
         config["replies"]["normalize"] = normalize
-        config["build"]["max_iterations"] = 4
+        config["build"]["task_max_iterations"] = 4
         (self.root / "config.json").write_text(json.dumps(config))
         plan = json.dumps({"title": "Greeter", "summary": "s", "tasks": [
             {"id": "T1", "title": "greet.py", "description": "d", "files": ["greet.py"], "depends_on": [],
@@ -158,7 +158,7 @@ class GemmaBuildTests(unittest.TestCase):
 
     def test_without_normalizing_no_file_is_created(self):
         s = self.build(normalize=False)
-        self.assertNotEqual(s["status"], "finished")
+        self.assertEqual(s["status"], "partial")
         self.assertFalse((Path(s["run_dir"]) / "workspace" / "greet.py").exists())
 
 

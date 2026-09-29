@@ -138,7 +138,7 @@ class PipelineTests(unittest.TestCase):
         s = self.build("greeter", model=FakeModel([PLAN, write("app.py"), final()]))
         st = load_state(s["run_dir"])
         self.assertEqual((st.status, st.next), ("finished", None))
-        self.assertEqual(st.history, ["intake", "plan", "build", "finish"])
+        self.assertEqual(st.history, ["intake", "plan", "next_task", "run_task", "next_task", "finish"])
         self.assertEqual(st.plan["title"], "Greeter")
         self.assertEqual(json.loads((Path(s["run_dir"]) / "summary.json").read_text())["status"], "finished")
 
@@ -152,7 +152,8 @@ class PipelineTests(unittest.TestCase):
 
         s = self.build(None, from_run=str(run_dir), model=FakeModel([PLAN, write("app.py"), final()]))
         self.assertEqual(s["status"], "finished")
-        self.assertEqual(load_state(run_dir).history, ["intake", "plan", "build", "finish"])
+        self.assertEqual(load_state(run_dir).history,
+                         ["intake", "plan", "next_task", "run_task", "next_task", "finish"])
 
     def test_ctrl_c_during_build_then_resume(self):
         with self.assertRaises(RunStopped) as ctx:
@@ -160,8 +161,9 @@ class PipelineTests(unittest.TestCase):
         self.assertIsInstance(ctx.exception.cause, KeyboardInterrupt)
         run_dir = self.only_run()
         st = load_state(run_dir)
-        self.assertEqual((st.next, st.status), ("build", "interrupted"))
-        self.assertEqual(json.loads((run_dir / "summary.json").read_text())["status"], "interrupted")
+        self.assertEqual((st.next, st.status, st.current_task), ("run_task", "interrupted", "T1"))
+        plan = json.loads((run_dir / "plan.json").read_text())
+        self.assertEqual(plan["tasks"][0]["status"], "in_progress")
 
         model = FakeModel([write("app.py"), final()])
         s = self.build(None, from_run=str(run_dir), model=model)
@@ -173,11 +175,12 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(any(e.get("event") == "resume" for e in events))
         self.assertEqual(sorted(f["path"] for f in s["files"]), ["app.py", "half.py"])
 
-    def test_model_error_during_build_is_resumable(self):
-        s = self.build("greeter", model=FakeModel([PLAN, ConnectionError("gone")]))
-        st = load_state(s["run_dir"])
-        self.assertEqual((s["status"], st.status, st.next), ("error", "error", None))
-        s = self.build(None, from_run=s["run_dir"], model=FakeModel([write("app.py"), final()]))
+    def test_model_error_during_task_is_resumable(self):
+        with self.assertRaises(RunStopped) as ctx:
+            self.build("greeter", model=FakeModel([PLAN, ConnectionError("gone")]))
+        st = load_state(ctx.exception.run_dir)
+        self.assertEqual((st.next, st.status), ("run_task", "error"))
+        s = self.build(None, from_run=ctx.exception.run_dir, model=FakeModel([write("app.py"), final()]))
         self.assertEqual(s["status"], "finished")
 
     def test_finished_run_is_not_rebuilt(self):
@@ -188,7 +191,7 @@ class PipelineTests(unittest.TestCase):
     def test_review_pause_is_in_state(self):
         s = self.build("greeter", review=True, model=FakeModel([PLAN]))
         st = load_state(s["run_dir"])
-        self.assertEqual((s["status"], st.next, st.status), ("planned", "build", "planned"))
+        self.assertEqual((s["status"], st.next, st.status), ("planned", "next_task", "planned"))
 
 
 if __name__ == "__main__":

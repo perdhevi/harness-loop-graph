@@ -193,16 +193,18 @@ class BuildFlowTests(unittest.TestCase):
         spec = run_dir / "SPEC.md"
         spec.write_text(spec.read_text() + "\nReviewer note: greet in Indonesian too.\n")
 
-        # one loop builds the whole plan
-        model = FakeModel([write("app.py", "print('halo')\n"), write("README.md", "# Greeter\n"),
-                           final("app.py prints halo; README.md written")])
+        # Stage 8: one loop per task — T1 writes a file and finishes, T2 finishes
+        model = FakeModel([write("app.py", "print('halo')\n"), final("app.py prints halo"),
+                           write("README.md", "# Greeter\n"), final("readme done")])
         s = self.quiet(main.run_build, None, from_run=str(run_dir), model=model)
         self.assertEqual(s["status"], "finished")
         self.assertEqual(s["plan"], {"title": "Greeter", "tasks": 2})
         first = model.calls[0]["messages"][0]["content"]
         self.assertIn("Greeter module (edited by reviewer)", first)
         self.assertIn("Reviewer note: greet in Indonesian too.", first)
-        self.assertIn("done when: `README.md` exists", first)
+        second_task = model.calls[2]["messages"][0]["content"]
+        self.assertIn("Done when: `README.md` exists", second_task)
+        self.assertIn("app.py prints halo", second_task)     # T1's hand-off note
 
         with self.assertRaisesRegex(PlanError, "already been built"):
             self.quiet(main.run_build, None, from_run=str(run_dir), model=FakeModel([]))

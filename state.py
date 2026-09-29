@@ -20,6 +20,7 @@ class BuildState:
     plan: dict | None = None
     spec: str | None = None
     status: str = "new"
+    current_task: str | None = None
     next: str | None = None
     history: list[str] = field(default_factory=list)
     summary: dict | None = None

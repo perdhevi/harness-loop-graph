@@ -27,7 +27,8 @@
   "workspace": "workspace",
   "build": {
     "max_iterations": 40,
-    "runs_dir": "runs"
+    "runs_dir": "runs",
+    "task_max_iterations": 20
   },
   "plan": {
     "max_tasks": 12,

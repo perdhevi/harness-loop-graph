@@ -108,5 +108,38 @@
     "NOTE: this build was stopped earlier and is being resumed. The workspace is NOT empty. It already contains:",
     "{files}",
     "Read what is there before changing it, keep what works, and continue from where the work stopped."
+  ],
+  "task_rules": [
+    "You are working on ONE task from the plan for a larger project. The other tasks are handled separately, before or after this one.",
+    "",
+    "Rules for this task:",
+    "- Use the workspace tools. Do only this task; do not start later tasks.",
+    "- Build on what earlier tasks left in the workspace. Read a file before changing it.",
+    "- Prefer the standard library. Do not run pip install or npm install.",
+    "- Before finishing, make sure the task's \"done when\" condition holds (run the command, or check the file exists).",
+    "- Your final answer is a short hand-off note for the tasks that follow: what you did, which files you created or changed, and anything they need to know (function names, commands, decisions)."
+  ],
+  "task_request": [
+    "Request:",
+    "{request}",
+    "",
+    "=== SPEC ===",
+    "{spec}",
+    "",
+    "=== PLAN (status of every task) ===",
+    "{plan_status}",
+    "",
+    "=== NOTES FROM EARLIER TASKS ===",
+    "{handoffs}",
+    "",
+    "=== WORKSPACE NOW ===",
+    "{files}",
+    "",
+    "=== YOUR TASK: {task_id} — {task_title} ===",
+    "{task_description}",
+    "Files: {task_files}",
+    "Done when: {task_done_when}",
+    "",
+    "Do only this task, then give your hand-off note as the final answer."
   ]
 }

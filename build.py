@@ -107,6 +107,8 @@ def execute_build(
     format_reminder: str,
     on_step: Callable[[Step], None] | None = None,
     plan_info: dict | None = None,
+    label: dict | None = None,
+    write_summary: bool = True,
 ) -> dict:
     """Run the loop for one build; always writes summary.json, even on error.
 
@@ -119,7 +121,7 @@ def execute_build(
     def record(step: Step) -> None:
         steps.append(step)
         with open(run.transcript, "a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(step), ensure_ascii=False) + "\n")
+            f.write(json.dumps({**(label or {}), **asdict(step)}, ensure_ascii=False) + "\n")
         if on_step:
             on_step(step)
 
@@ -157,7 +159,8 @@ def execute_build(
         "approx_tokens_in": counter.chars_in // 4,
         "approx_tokens_out": counter.chars_out // 4,
     }
-    run.summary_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if write_summary:
+        run.summary_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     if interrupted:
         raise KeyboardInterrupt
     return summary
