@@ -14,7 +14,7 @@ The project is organised like a book in two parts:
 ```bash
 # Local model
 ollama pull qwen3:8b
-python main.py "Write a Python function that checks whether a string is a palindrome"
+python main.py "What is (17 * 23) + 4, and is it prime?"
 
 # Or Anthropic: set "provider": "anthropic" in config.json, then
 export ANTHROPIC_API_KEY=...
@@ -42,7 +42,7 @@ Build these in order.
 | # | Stage | Adds | Status |
 |---|---|---|---|
 | 01 | [Model adapter](stages/01-model-adapter/README.md) | Send one prompt to a model and get one answer back | ✅ done |
-| 02 | ReAct loop | Turn the single call into a loop: reason → act → observe → repeat, with a max-iterations guard | ⬜ planned |
+| 02 | [ReAct loop](stages/02-react-loop/README.md) | Turn the single call into a loop: reason → act → observe → repeat, with a max-iterations guard | ✅ done |
 | 03 | Tool registry & dispatch | Give the loop one place to find tools and call them by name, with local Python tools defined in JSON | ⬜ planned |
 | 04 | MCP tools & workspace | Connect to MCP servers and expose their tools through the same registry — starting with our own workspace server that lets the loop write files and run commands in one project folder | ⬜ planned |
 | 05 | Request → first build | Take a request in plain language, create a fresh project workspace, and let the loop build it end to end with the workspace tools | ⬜ planned |

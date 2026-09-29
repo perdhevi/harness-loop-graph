@@ -16,5 +16,11 @@
       "max_tokens": 1024,
       "timeout_s": 120
     }
+  },
+  "loop": {
+    "max_iterations": 8
+  },
+  "replies": {
+    "normalize": true
   }
 }

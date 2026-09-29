@@ -2,7 +2,7 @@
 
 **Part 1 · Build pipeline** · **Status:** ✅ done
 
-[Index](../../README.md) · Stage 02: ReAct loop →
+[Index](../../README.md) · [Stage 02: ReAct loop →](../../stages/02-react-loop/README.md)
 
 ## Goal
 
@@ -55,4 +55,4 @@ stage 1: model adapter + single prompt/response cycle
 
 ---
 
-[Index](../../README.md) · Stage 02: ReAct loop →
+[Index](../../README.md) · [Stage 02: ReAct loop →](../../stages/02-react-loop/README.md)
