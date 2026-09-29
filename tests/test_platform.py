@@ -178,6 +178,8 @@ class DoctorTests(unittest.TestCase):
         c = json.loads((ROOT / "config.json").read_text())
         c["provider"] = "ollama"
         c["providers"]["ollama"]["base_url"] = f"http://127.0.0.1:{srv.server_address[1]}"
+        c["providers"]["ollama"]["model"] = "qwen3:8b"      # the model the fake server has, whatever config.json says
+        c["roles"] = {}
         path = Path(tmp.name) / "config.json"
         path.write_text(json.dumps(c))
         return path
