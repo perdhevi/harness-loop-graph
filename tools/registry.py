@@ -26,6 +26,8 @@ class ToolSource(Protocol):
     def call(self, name: str, args: dict) -> Any: ...   # may raise
 
 
+FINISH_WORDS = {"final", "finish", "final_answer", "answer", "done"}
+
 _TYPES = {
     "string": lambda v: isinstance(v, str),
     "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
@@ -110,7 +112,10 @@ class ToolRegistry:
         resolved = self.resolve(name)
         if resolved is None:
             available = ", ".join(self._specs) or "(none)"
-            return f"Error: unknown tool '{name}'. Available tools: {available}"
+            hint = ""
+            if name.strip().lower() in FINISH_WORDS:           # Chapter I: finishing is not a tool call
+                hint = (' To finish, do not call a tool: reply {"thought": "...", "final": "your answer"}.')
+            return f"Error: unknown tool '{name}'.{hint} Available tools: {available}"
         if resolved != name:
             result = self.call(resolved, args)
             return f"(ran as {resolved}; use that exact name next time)\n{result}"

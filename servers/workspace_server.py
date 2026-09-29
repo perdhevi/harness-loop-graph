@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import difflib
 import shlex
 import subprocess
 import sys
@@ -28,6 +29,29 @@ READ_LIMIT = 100_000
 OUTPUT_LIMIT = 100_000   # per stream; the harness's OutputLimiter (Chapter C) decides what the model sees
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache"}
 
+
+
+def _closest(text: str, old: str, limit: int = 1500) -> str:
+    """Show the lines that look most like `old`, so the next edit can copy them exactly (Chapter I)."""
+    lines = text.splitlines()
+    want = old.strip("\n").splitlines() or [old]
+    if not lines:
+        return " The file is empty."
+    if " ".join(old.split()) and " ".join(old.split()) in " ".join(text.split()):
+        hint = " The text is there, but its spaces, tabs or line breaks differ."
+    else:
+        hint = ""
+    n = max(1, len(want))
+    if len(lines) > 5000:
+        return hint + " The file is long; read_file the part you want to change and copy it exactly."
+    best, best_at = -1.0, 0
+    for at in range(0, max(1, len(lines) - n + 1)):
+        r = difflib.SequenceMatcher(None, "\n".join(want), "\n".join(lines[at:at + n]), autojunk=False).ratio()
+        if r > best:
+            best, best_at = r, at
+    shown = "\n".join(f"{best_at + k + 1:>4}| {line}" for k, line in enumerate(lines[best_at:best_at + n]))
+    return (f"{hint} Closest match (lines {best_at + 1}–{best_at + n}, {best:.0%} similar); copy 'old' exactly "
+            f"from here, or read_file first:\n{shown[:limit]}")
 
 class ToolError(Exception):
     """A tool-level failure: reported to the model as isError=true."""
@@ -79,7 +103,7 @@ class Workspace:
         text = p.read_text(encoding="utf-8")
         count = text.count(old)
         if count == 0:
-            raise ToolError(f"'old' text not found in {path}")
+            raise ToolError(f"'old' text not found in {path}.{_closest(text, old)}")
         if count > 1:
             raise ToolError(f"'old' text appears {count} times in {path}; include more context so it is unique")
         p.write_text(text.replace(old, new, 1), encoding="utf-8")

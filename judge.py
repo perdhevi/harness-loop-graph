@@ -133,7 +133,7 @@ def make_verdict(model, prompts: dict[str, str], evidence: dict[str, str], *, ma
         raw = model.complete(prompts["judge_system"], messages)
         messages.append({"role": "assistant", "content": raw if raw.strip() else "(empty reply)"})
         try:
-            obj = _first_json_object(_THINK_RE.sub("", raw or ""))
+            obj = _first_json_object(_THINK_RE.sub("", raw or ""), want=("verdict",))
         except ParseError as e:
             errors = [f"no JSON object in the reply ({e})"]
         else:

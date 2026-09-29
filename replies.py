@@ -14,6 +14,7 @@ Recognised:
               {"type": "tool_use", "name": …, "input": …}                 (Anthropic)
               {"tool_calls": [ … ]}                                        (first call)
               {"final_answer"|"answer": …}                                 → final
+              {"action": "final"|"finish"|"answer"|…, "args": {"final": …}}  → final   (Chapter I)
 Anything else is passed through unchanged, so the loop's own error handling still applies.
 """
 
@@ -26,7 +27,9 @@ from typing import Callable
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _GEMMA_START = re.compile(r"(?:<\|tool_call>\s*)?call\s*:\s*([A-Za-z_][\w.\-/:]*)\s*\{")
 _Q = '<|"|>'
-_DECODER = json.JSONDecoder()
+_DECODER = json.JSONDecoder(strict=False)                # real line breaks inside strings are fine (Chapter I)
+FINAL_ACTIONS = {"final", "finish", "final_answer", "answer", "done"}
+FINAL_ARG_KEYS = ("final", "answer", "final_answer", "text", "message", "result", "response", "summary", "content")
 NAME_KEYS = ("action", "tool", "tool_name", "name", "function", "function_name")
 ARG_KEYS = ("args", "arguments", "parameters", "input", "params", "tool_input")
 
@@ -192,6 +195,21 @@ def _from_json(obj: dict) -> dict | None:
     return _call(obj.get("thought", obj.get("reasoning", "")), name, args)
 
 
+def _final_action(obj: dict) -> dict | None:
+    """{"action": "final", "args": {"final": "…"}}: the model tried to finish by calling a tool named final."""
+    action = obj.get("action")
+    if not isinstance(action, str) or action.strip().lower() not in FINAL_ACTIONS:
+        return None
+    args = obj.get("args") if isinstance(obj.get("args"), dict) else {}
+    text = next((args[k] for k in FINAL_ARG_KEYS if isinstance(args.get(k), str)), None)
+    if text is None:
+        strings = [v for v in args.values() if isinstance(v, str)]
+        text = strings[0] if len(strings) == 1 else (json.dumps(args, ensure_ascii=False) if args else "")
+    if not text and isinstance(obj.get("final"), str):
+        text = obj["final"]
+    return {"thought": str(obj.get("thought", "")), "final": text}
+
+
 def _call(thought, name: str, args) -> dict | None:
     if isinstance(args, str):
         try:
@@ -209,6 +227,9 @@ def normalize_reply(text: str) -> tuple[str, str | None]:
     """Return (reply for the loop, name of the conversion or None if unchanged)."""
     cleaned = _THINK_RE.sub("", text or "")
     for obj in _json_objects(cleaned):
+        final = _final_action(obj)
+        if final is not None:
+            return json.dumps(final, ensure_ascii=False), "final-action"
         if ("action" in obj and isinstance(obj.get("action"), str)) or "final" in obj:
             return text, None                                # canonical: leave it exactly as it was
         converted = _from_json(obj)

@@ -87,8 +87,9 @@ Read and build these when their symptom appears. Order is a suggestion, apart fr
 | F | [Persistence & benchmark](chapters/F-benchmark-regression/README.md) | You changed the harness and can't tell whether it got better or worse. | Stage 10 (judge) for verdicts | ✅ done |
 | G | [Fixing a finished run](chapters/G-fix-run/README.md) | A build finished, but something is missing or wrong, and you want to change that run instead of starting over. | Stage 10 (judge) | ✅ done |
 | H | [A model per role](chapters/H-role-models/README.md) | One model can't do every job well: good at code but bad at plans or verdicts, or too slow to use everywhere. | Stage 10 (judge) | ✅ done |
+| I | [Robust replies and plans](chapters/I-robust-replies/README.md) | Runs fail on the model's format: parse errors, revisions that escalate, tasks that keep saying "done" until they run out of steps. | Stages 02, 04, 06, 10 | ✅ done |
 
-Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands. Chapter G adds `build --fix`. Chapter H lets each role (planner, task, judge, reviser, compactor) use its own model; without a `roles` setting, one model does everything.
+Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands. Chapter G adds `build --fix`. Chapter H lets each role (planner, task, judge, reviser, compactor) use its own model; without a `roles` setting, one model does everything. Chapter I makes replies and plans from small models far more robust.
 
 **Fixed dependencies inside Part 2:** C (context management) before D (compaction). A (tracing) is worth reading as soon as Stage 02 is done.
 

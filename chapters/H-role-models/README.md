@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested against a fake Ollama server — confirm with real models)
 
-[← Chapter G: Fixing a finished run](../../chapters/G-fix-run/README.md) · [Index](../../README.md)
+[← Chapter G: Fixing a finished run](../../chapters/G-fix-run/README.md) · [Index](../../README.md) · [Chapter I: Robust replies and plans →](../../chapters/I-robust-replies/README.md)
 
 ## Read this when
 
@@ -82,4 +82,4 @@ chapter H: a model per role — roles section in config.json, per-role adapters,
 
 ---
 
-[← Chapter G: Fixing a finished run](../../chapters/G-fix-run/README.md) · [Index](../../README.md)
+[← Chapter G: Fixing a finished run](../../chapters/G-fix-run/README.md) · [Index](../../README.md) · [Chapter I: Robust replies and plans →](../../chapters/I-robust-replies/README.md)

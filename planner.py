@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
@@ -125,7 +126,10 @@ def validate_plan(obj, max_tasks: int = 15) -> tuple[dict, list[str]]:
             deps = []
         dw = t.get("done_when")
         if not isinstance(dw, dict) or len([k for k in ("command", "file") if k in dw]) != 1:
-            errors.append(f"{where}: 'done_when' must have exactly one of 'command' or 'file'")
+            other = [k for k in dw if k not in ("command", "file")] if isinstance(dw, dict) else []
+            hint = (f" (it uses {', '.join(repr(k) for k in other)}; write it as "
+                    f'{{"command": "python -m pytest -q"}} or {{"file": "README.md"}})') if other else ""
+            errors.append(f"{where}: 'done_when' must have exactly one of 'command' or 'file'{hint}")
             dw = {}
         elif "command" in dw and (not isinstance(dw["command"], str) or not dw["command"].strip()):
             errors.append(f"{where}: done_when.command must be a non-empty string")
@@ -197,8 +201,33 @@ def render_tasks(plan: dict) -> str:
 
 # ---------------------------------------------------------------- planning
 
-def _parse(text: str) -> dict:
-    return _first_json_object(_THINK_RE.sub("", text or ""))
+SHELL_TOKENS = {"&&", "||", "|", ">", ">>", "<", ";", "2>&1", "&"}
+_KEYLESS_DONE_WHEN = re.compile(r'("done_when"\s*:\s*\{)\s*("(?:[^"\\]|\\.)*")\s*\}')
+
+
+def command_problems(tasks: list[dict]) -> list[str]:
+    """Checks run without a shell (Chapter I): `a && b` or `x > file` can never pass, so reject them early."""
+    problems = []
+    for t in tasks:
+        cmd = (t.get("done_when") or {}).get("command")
+        if not isinstance(cmd, str):
+            continue
+        try:
+            words = shlex.split(cmd)
+        except ValueError as e:
+            problems.append(f"task {t.get('id')}: done_when.command can't be split into words ({e}); check its quotes")
+            continue
+        bad = sorted({w for w in words if w in SHELL_TOKENS or w.startswith((">", "2>"))})
+        if bad:
+            problems.append(f"task {t.get('id')}: done_when.command uses {' '.join(bad)}, but checks run without a "
+                            "shell; use one plain command, e.g. python -m pytest -q")
+    return problems
+
+
+def _parse(text: str, want: tuple[str, ...] = ()) -> dict:
+    text = _THINK_RE.sub("", text or "")
+    text = _KEYLESS_DONE_WHEN.sub(r'\1"command": \2}', text)      # {"python -c …"} → {"command": "python -c …"}
+    return _first_json_object(text, want)
 
 
 def make_plan(
@@ -232,7 +261,7 @@ def make_plan(
         messages.append({"role": "assistant", "content": raw if raw.strip() else "(empty reply)"})
         entry = {"attempt": attempt, "raw": raw}
         try:
-            obj = _parse(raw)
+            obj = _parse(raw, ("tasks", "questions", "title"))
         except ParseError as e:
             last_errors = [f"no JSON object in the reply ({e})"]
         else:
@@ -259,6 +288,7 @@ def make_plan(
                     continue
             else:
                 plan, last_errors = validate_plan(obj, max_tasks)
+                last_errors = last_errors or command_problems(plan["tasks"])
                 if not last_errors:
                     plan["clarifications"] = clarifications
                     entry["ok"] = True
@@ -316,6 +346,15 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
     if not isinstance(new_tasks, list):
         errors.append("'tasks' must be a list")
         new_tasks = []
+    new_ids = {t.get("id") for t in new_tasks if isinstance(t, dict)}
+    retry = [x for x in retry if x not in new_ids]      # Chapter I: new task ids listed under retry too — just drop them
+    done_checks = {json.dumps(t["done_when"], sort_keys=True): t["id"] for t in plan["tasks"] if t["status"] == "done"}
+    for t in new_tasks:
+        if isinstance(t, dict) and isinstance(t.get("done_when"), dict):
+            same = done_checks.get(json.dumps(t["done_when"], sort_keys=True))
+            if same and "test" not in str(t["done_when"].get("command", "")):   # a test suite grows; that's fine
+                errors.append(f"task {t.get('id')}: its done_when is the same check as {same}, which already passes, "
+                              "so it can't show the new work is done; give it a check that tests the change")
     if not retry and not new_tasks:
         errors.append("change something: list task ids under 'retry' and/or new tasks under 'tasks'")
     for tid in retry:
@@ -344,7 +383,9 @@ def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spe
                 verdict: dict, files: str, round_no: int, max_attempts: int = 3, max_tasks: int = 15,
                 log: Callable[[dict], None] | None = None) -> tuple[dict, dict]:
     """Turn judge feedback into plan changes. Returns (new plan, change record)."""
+    retryable = ", ".join(t["id"] for t in plan["tasks"] if t["status"] in RESETTABLE) or "(none: add new tasks)"
     message = (prompts["revise_request"]
+               .replace("{retryable}", retryable)
                .replace("{request}", request).replace("{spec}", spec.strip())
                .replace("{plan_status}", plan_status)
                .replace("{feedback}", verdict.get("feedback") or "(none)")
@@ -356,25 +397,27 @@ def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spe
         raw = model.complete(prompts["revise_system"], messages)
         messages.append({"role": "assistant", "content": raw if raw.strip() else "(empty reply)"})
         try:
-            obj = _parse(raw)
+            obj = _parse(raw, ("changes", "retry", "tasks"))
         except ParseError as e:
             errors = [f"no JSON object in the reply ({e})"]
         else:
             merged, errors = _apply_revision(plan, obj)
             if not errors:
                 new_plan, errors = validate_plan(merged, max_tasks * 2)
+                known = {t["id"] for t in plan["tasks"]}
+                errors = errors or command_problems([t for t in new_plan["tasks"] if t["id"] not in known])
                 if not errors:
                     new_plan["clarifications"] = plan.get("clarifications", [])
                     known = {t["id"] for t in plan["tasks"]}
                     record = {"round": round_no, "changes": str(obj.get("changes", "")),
-                              "retry": list(obj.get("retry") or []),
+                              "retry": [x for x in (obj.get("retry") or []) if x in known],
                               "added": [t["id"] for t in new_plan["tasks"] if t["id"] not in known]}
                     if log:
                         log({"revision": round_no, "attempt": attempt, "raw": raw, "ok": True})
                     return new_plan, record
         if log:
             log({"revision": round_no, "attempt": attempt, "raw": raw, "errors": errors})
-        messages.append({"role": "user", "content": prompts["planner_fix"].replace(
+        messages.append({"role": "user", "content": prompts.get("revise_fix", prompts["planner_fix"]).replace(
             "{errors}", "\n".join(f"- {e}" for e in errors))})
     raise PlanError(f"no valid revision after {max_attempts} attempts: " + "; ".join(errors))
 
