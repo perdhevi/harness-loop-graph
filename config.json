@@ -47,6 +47,9 @@
     "evidence_chars": 60000,
     "file_chars": 12000
   },
+  "trace": {
+    "enabled": true
+  },
   "replies": {
     "normalize": true
   }

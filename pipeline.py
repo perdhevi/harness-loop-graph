@@ -32,6 +32,7 @@ from loop import Step
 from planner import PlanError, load_plan, make_plan, render_tasks, revise_plan, revision_section, save_plan
 from runtime import build_registry
 from state import BuildState, load_state, save_state
+from tracing import NullTracer
 from replies import NormalizingModel
 
 RESUMABLE_ENDED = {"error", "interrupted"}
@@ -52,12 +53,14 @@ class Context:
     say: Callable[[str], None] = print
     meta: dict = field(default_factory=dict)
     stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
+    tracer: object = field(default_factory=NullTracer)      # Chapter A
     _registry: object = None
 
     def registry(self, workspace: Path):
         """One set of MCP servers per run, shared by every task."""
         if self._registry is None:
-            self._registry = build_registry(self.config, workspace, self.stack)
+            tools = build_registry(self.config, workspace, self.stack)
+            self._registry = self.tracer.wrap_tools(tools)
         return self._registry
 
     def close(self) -> None:
@@ -172,7 +175,10 @@ def build_graph(ctx: Context) -> Graph:
         """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}) into the JSON action."""
         if not ctx.config.get("replies", {}).get("normalize", True):
             return ctx.model
-        return NormalizingModel(ctx.model)
+
+        def on_normalize(how: str, raw: str) -> None:
+            ctx.tracer.event("normalized", format=how, raw=raw[:300])
+        return NormalizingModel(ctx.model, on_normalize=on_normalize)
 
     def intake(s: BuildState) -> None:
         if s.run_dir:
@@ -314,6 +320,8 @@ def build_graph(ctx: Context) -> Graph:
         checks.append({"attempt": len(checks) + 1, **res.to_dict()})
         _append_jsonl(run.transcript, {"event": "check", "task": task["id"], "ok": res.ok,
                                        "target": res.target, "exit_code": res.exit_code})
+        ctx.tracer.event("check", phase="verify", kind=res.kind, target=res.target, ok=res.ok,
+                         exit_code=res.exit_code)
         if res.ok:
             task["status"], task["verified"] = "done", True
             task.pop("error", None)
@@ -345,6 +353,8 @@ def build_graph(ctx: Context) -> Graph:
                                 output_chars=cfg_verify.get("output_chars", 3000))
                 seen[key] = res.to_dict()
                 ctx.say(f"[final] {'✓' if res.ok else '✗'} {res.describe()}")
+                ctx.tracer.event("check", phase="final", kind=res.kind, target=res.target, ok=res.ok,
+                                 exit_code=res.exit_code)
             results.append({"task": task["id"], **seen[key]})
         s.final_checks = results
         _append_jsonl(run.transcript, {"event": "final_checks", "ok": all(r["ok"] for r in results),
@@ -369,6 +379,8 @@ def build_graph(ctx: Context) -> Graph:
         s.verdicts.append(v)
         met = sum(1 for r in v["requirements"] if r["met"])
         ctx.say(f"[judge] {v['verdict']}  ({met}/{len(v['requirements'])} requirements met)")
+        ctx.tracer.event("verdict", verdict=v["verdict"], met=met, total=len(v["requirements"]),
+                         overrides=[f"{o['from']}→{o['to']}" for o in v["overrides"]], round=s.revisions)
         for o in v["overrides"]:
             ctx.say(f"[judge] harness override: {o['from']} → {o['to']} ({o['reason']})")
 
@@ -447,7 +459,7 @@ def build_graph(ctx: Context) -> Graph:
                      ("next_task", next_task), ("run_task", run_task), ("verify", verify),
                      ("final_check", final_check), ("judge", judge), ("revise", revise),
                      ("finish", finish)]:
-        g.node(name, fn)
+        g.node(name, ctx.tracer.wrap_node(name, fn))
     g.edge("intake", "plan")
     g.branch("plan", after_plan, {"build", "next_task", "finish"})
     g.edge("build", "finish")
@@ -506,6 +518,20 @@ def run_pipeline(
         state = BuildState(request=request, options={"review": review, "no_plan": no_plan,
                                                      "max_iterations": max_iterations, "judge": judge_on})
         start = None
+
+    # Chapter A: wrap from outside — the loop, nodes and tools don't know they're traced
+    tracer = ctx.tracer
+    ctx.model = tracer.wrap_model(ctx.model)
+    if tracer.enabled:
+        user_on_step = ctx.on_step
+
+        def on_step(step):
+            tracer.step(step)
+            if user_on_step:
+                user_on_step(step)
+        ctx.on_step = on_step
+    if resume_dir:
+        tracer.bind(state.run_dir, run_id=state.run_id, resumed_at=start)
 
     graph = build_graph(ctx)
     # per task: next_task + run_task + verify, plus (run_task + verify) per fix attempt;

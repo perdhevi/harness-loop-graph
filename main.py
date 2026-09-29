@@ -12,6 +12,7 @@ Usage:
     python main.py build --no-plan "..."          # Stage 5 behaviour
     python main.py build --no-judge "..."         # Stage 9 behaviour (checks, no judge)
     python main.py build --max-iterations 60 "..."
+    python main.py trace runs/<id> [--steps]       # read a build's trace (Chapter A)
     python main.py doctor                          # check settings, workspace server, model and reply format
 
     python main.py "What is (17 * 23) + 4, and is it prime?"     # question mode (Stages 2–4)
@@ -32,6 +33,7 @@ from pathlib import Path
 from loop import Step, run_loop
 from model_adapter import ModelError, make_adapter
 from pipeline import Context, RunStopped, run_pipeline
+from tracing import NullTracer, Tracer
 from planner import PlanError
 from runtime import CONFIG_PATH, PROMPTS_PATH, ROOT, build_registry, load_json, prompt_text
 from tools.mcp_client import McpError
@@ -132,6 +134,7 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
         ask=ask,
         on_step=print_step,
         meta={"provider": provider, "model": config["providers"][provider].get("model")},
+        tracer=Tracer() if config.get("trace", {}).get("enabled", True) else NullTracer(),
     )
     on_enter = (lambda name, state: print(f"[graph] → {name}")) if verbose_graph else None
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
@@ -245,6 +248,20 @@ def main_build(argv: list[str]) -> int:
             "escalated": 3}.get(summary["status"], 1)
 
 
+def main_trace(argv: list[str]) -> int:
+    from trace_view import load_events, render
+    parser = argparse.ArgumentParser(prog="main.py trace", description="Show a build's trace")
+    parser.add_argument("run_dir")
+    parser.add_argument("--steps", action="store_true", help="list every loop step and tool call")
+    args = parser.parse_args(argv)
+    try:
+        print(render(load_events(args.run_dir), steps=args.steps), end="")
+    except FileNotFoundError as e:
+        print(f"[error] {e}")
+        return 1
+    return 0
+
+
 def _safe_console() -> None:
     """Windows: printing ✓ or — to a cp1252 pipe/file raises UnicodeEncodeError; replace instead of crashing."""
     for stream in (sys.stdout, sys.stderr):
@@ -346,6 +363,8 @@ def main(argv: list[str] | None = None) -> int:
         return main_doctor(argv[1:])
     if argv[:1] == ["build"]:
         return main_build(argv[1:])
+    if argv[:1] == ["trace"]:
+        return main_trace(argv[1:])
 
     parser = argparse.ArgumentParser(description="harness-loop-graph",
                                      epilog="For projects, use: main.py build \"<request>\"")

@@ -66,7 +66,7 @@ Run `python main.py doctor` first. It checks every item below in about ten secon
 
 ```bash
 python -c "import json; print(json.load(open('runs/<id>/summary.json'))['files'])"   # what's in the workspace
-cat runs/<id>/transcript.jsonl                                                     # every step and tool call
+python main.py trace runs/<id> --steps                                              # every step and tool call
 ```
 
 The files are in `runs/<id>/workspace/`, next to `main.py`, not in the folder you ran the command from.

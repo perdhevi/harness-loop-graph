@@ -155,6 +155,11 @@ class GemmaBuildTests(unittest.TestCase):
         self.assertEqual([x["action"] for x in steps[:2]], ["write_file", "run_command"])
         self.assertIn("ran as workspace.write_file", steps[0]["observation"])
         self.assertIn("Hello — world ✓", steps[1]["observation"])
+        from trace_view import load_events, render
+        events = load_events(run)
+        self.assertEqual([e["format"] for e in events if e["type"] == "normalized"],
+                         ["gemma-call", "gemma-call", "json-alias"])
+        self.assertIn("normalized×3", render(events))
 
     def test_without_normalizing_no_file_is_created(self):
         s = self.build(normalize=False)
