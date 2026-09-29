@@ -4,3 +4,5 @@ workspace/
 runs/
 memory/
 benchmarks/results/
+
+.venv
