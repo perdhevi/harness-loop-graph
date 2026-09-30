@@ -11,7 +11,9 @@ Stage 9:  run_task → verify: the harness runs each task's done_when itself;
 Stage 10: final_check → judge: a separate model call compares the project with
           the request; revise sends feedback back through the planner,
           escalate hands a REPORT.md to a human.
-Chapter H (--fix): a finished run re-enters at revise with a person's feedback in place
+Chapter J (review): intake copies an existing project → survey runs its own tests → review
+          (read-only reviewer loop, REVIEW.md) → plan → the usual task loop; finish writes CHANGES.patch.
+Chapter G (--fix): a finished run re-enters at revise with a person's feedback in place
           of a judge verdict, then goes through tasks, checks and the judge again.
 """
 
@@ -37,6 +39,8 @@ from state import BuildState, load_state, save_state
 from tracing import NullTracer, RoleModel
 from compaction import CompactingModel
 from replies import NormalizingModel
+from review import (ReadOnlyTools, ReviewError, detect_tests, import_project, make_patch, parse_review,
+                    render_baseline, render_findings, render_review)
 from sensors import TaskSensors
 from memory import error_signature, project_map, render_fix_lessons, render_review_lessons
 from trace_view import load_events, metrics as trace_metrics
@@ -218,6 +222,7 @@ def build_graph(ctx: Context) -> Graph:
     cfg_context = ctx.config.get("context", {})
     cfg_compaction = ctx.config.get("compaction", {})
     cfg_sensors = ctx.config.get("sensors", {})
+    cfg_review = ctx.config.get("review", {})       # Chapter J
     sensors_on = cfg_sensors.get("enabled", True)
     warn_at = cfg_sensors.get("warn_at", 0.5)
     P = ctx.prompts
@@ -227,9 +232,9 @@ def build_graph(ctx: Context) -> Graph:
     max_revisions = cfg_judge.get("max_revisions", 2)
     allowed = allowed_programs(ctx.config)          # Chapter I: checks may only start with these programs
 
-    def loop_model(label: str):
+    def loop_model(label: str, role: str = "task"):
         """Per loop: normalize other tool-call formats (e.g. Gemma's call:…{…}), then compact (Chapter D)."""
-        base = ctx.model_for("task")
+        base = ctx.model_for(role)
         if ctx.config.get("replies", {}).get("normalize", True):
             def on_normalize(how: str, raw: str) -> None:
                 ctx.tracer.event("normalized", format=how, raw=raw[:300])
@@ -266,6 +271,61 @@ def build_graph(ctx: Context) -> Graph:
                                                         "planned": not s.options.get("no_plan")})
         s.run_id, s.run_dir, s.status = run.id, str(run.dir), "new"
         ctx.say(f"[run] {run.dir}")
+        if s.options.get("source"):                     # Chapter J: work on a copy of an existing project
+            try:
+                info = import_project(s.options["source"], run.dir, ignore=cfg_review.get("ignore"),
+                                      max_files=cfg_review.get("max_files", 2000),
+                                      max_bytes=cfg_review.get("max_bytes", 20_000_000))
+            except ReviewError as e:
+                s.status, s.error = "import_failed", str(e)
+                ctx.say(f"[import] failed: {e}")
+                return
+            ctx.say(f"[import] {info['files']} files ({info['bytes']:,} bytes) from {info['source']} "
+                    "— your folder is not changed")
+
+    # --- Chapter J: an existing project
+    def survey(s: BuildState) -> None:
+        run = open_run(Path(s.run_dir))
+        command = s.options.get("test_command") or cfg_review.get("test_command") or detect_tests(run.workspace)
+        if not command:
+            s.baseline = {"command": None}
+            ctx.say("[survey] no tests found in the project")
+            return
+        res = run_check({"command": command}, run.workspace, ctx.registry(run.workspace),
+                        timeout_s=cfg_verify.get("timeout_s", 120), output_chars=cfg_verify.get("output_chars", 3000))
+        s.baseline = {"command": command, **res.to_dict()}
+        ctx.say(f"[survey] project tests before any change: {'✓' if res.ok else '✗'} {res.describe()}")
+        ctx.tracer.event("check", phase="baseline", kind=res.kind, target=res.target, ok=res.ok, exit_code=res.exit_code)
+
+    def review(s: BuildState) -> None:
+        run = open_run(Path(s.run_dir))
+        first = (P["review_request"].replace("{request}", s.request)
+                 .replace("{files}", project_map(run.workspace, max_chars=cfg_review.get("map_chars", 6000)))
+                 .replace("{baseline}", render_baseline(s.baseline)))
+        ctx.say("[review] reading the project …")
+        result = execute_build(
+            run, loop_model("review", role="reviewer"), ReadOnlyTools(ctx.registry(run.workspace)),
+            P["react_system"] + "\n\n" + P["reviewer_rules"], first,
+            max_iterations=cfg_review.get("max_iterations", 20), format_reminder=P["format_reminder"],
+            on_step=ctx.on_step, label={"phase": "review"}, write_summary=False)
+        if result["status"] == "error":
+            raise TaskError(f"review: {result['error']}")
+        s.review = parse_review(result["answer"])
+        if result["status"] != "finished":
+            s.review["summary"] = (s.review["summary"] + " " if s.review["summary"] else "") + \
+                f"(the reviewer ran out of steps after {result['steps']})"
+        s.review["steps"] = result["steps"]
+        (run.dir / "REVIEW.md").write_text(render_review(request=s.request, source=s.options["source"],
+                                                         baseline=s.baseline, review=s.review), encoding="utf-8")
+        counts = {sev: sum(1 for f in s.review["findings"] if f["severity"] == sev) for sev in ("high", "medium", "low")}
+        ctx.say(f"[review] {len(s.review['findings'])} finding(s): {counts['high']} high, {counts['medium']} medium, "
+                f"{counts['low']} low → {run.dir / 'REVIEW.md'}")
+        if s.options.get("only_review"):
+            s.status = "reviewed"
+            s.summary = {"id": s.run_id, "status": "reviewed", "error": None, "plan": None,
+                         "review": str(run.dir / "REVIEW.md"), "findings": len(s.review["findings"]),
+                         "baseline": s.baseline, "steps": result["steps"], "model_calls": result["model_calls"],
+                         "duration_s": result["duration_s"]}
 
     def plan(s: BuildState) -> None:
         if s.options.get("no_plan"):
@@ -280,9 +340,17 @@ def build_graph(ctx: Context) -> Graph:
                 s.lessons_shown = [x["id"] for x in lessons]
                 ctx.memory.mark(s.lessons_shown, shown=True)
                 ctx.say(f"[memory] {len(lessons)} review lesson(s) from past builds → planner")
+        prompts = P
+        if s.options.get("source"):                     # Chapter J: plan changes to an existing project
+            prompts = {**P, "planner_system": P["planner_system_existing"]}
+            existing = (P["existing_notes"]
+                        .replace("{files}", project_map(run_dir / "workspace", max_chars=cfg_review.get("map_chars", 6000)))
+                        .replace("{baseline}", render_baseline(s.baseline))
+                        .replace("{findings}", render_findings(s.review or {})))
+            notes = existing + ("\n\n" + notes if notes else "")
         ctx.say("[plan] asking the planner …")
         try:
-            p = make_plan(ctx.model_for("planner"), P, s.request, ask=ctx.ask,
+            p = make_plan(ctx.model_for("planner"), prompts, s.request, ask=ctx.ask,
                           max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
                           max_questions=cfg_plan.get("max_questions", 3),
                           log=lambda e: _append_jsonl(run_dir / "planner.jsonl", e), notes=notes, allowed=allowed)
@@ -290,6 +358,11 @@ def build_graph(ctx: Context) -> Graph:
             s.status, s.error = "plan_failed", str(e)
             return
         save_plan(run_dir, p, s.request)
+        if s.options.get("source"):
+            with open(run_dir / "SPEC.md", "a", encoding="utf-8") as f:
+                f.write(f"\n## Existing project\n\n- Source: `{s.options['source']}`\n"
+                        f"- Tests before any change: {render_baseline(s.baseline).splitlines()[0]}\n\n"
+                        f"## Review findings\n\n{render_findings(s.review or {})}\n")
         s.plan, s.spec, s.status = p, (run_dir / "SPEC.md").read_text(encoding="utf-8"), "planned"
         ctx.say(f"[plan] {p['title']} — {len(p['tasks'])} tasks")
         ctx.say("\n".join("       " + line for line in render_tasks(p).splitlines() if line[:1] != " "))
@@ -517,6 +590,15 @@ def build_graph(ctx: Context) -> Graph:
                 ctx.tracer.event("check", phase="final", kind=res.kind, target=res.target, ok=res.ok,
                                  exit_code=res.exit_code)
             results.append({"task": task["id"], **seen[key]})
+        if s.baseline and s.baseline.get("command"):    # Chapter J: the project's own tests, again
+            res = run_check({"command": s.baseline["command"]}, run.workspace, ctx.registry(run.workspace),
+                            timeout_s=cfg_verify.get("timeout_s", 120),
+                            output_chars=cfg_verify.get("output_chars", 3000))
+            s.baseline_after = {"command": s.baseline["command"], **res.to_dict()}
+            before = "passed" if s.baseline.get("ok") else "failed"
+            ctx.say(f"[final] project tests: {'✓' if res.ok else '✗'} {res.describe()} (before: {before})")
+            if s.baseline.get("ok"):                    # they passed before, so they must pass now
+                results.append({"task": "baseline", **res.to_dict()})
         s.final_checks = results
         _append_jsonl(run.transcript, {"event": "final_checks", "ok": all(r["ok"] for r in results),
                                        "count": len(seen)})
@@ -524,9 +606,13 @@ def build_graph(ctx: Context) -> Graph:
     def judge(s: BuildState) -> None:
         run = open_run(Path(s.run_dir))
         s.plan, s.spec = load_plan(run.dir, load_limit)
+        spec = (s.spec or "").strip()
+        if s.baseline_after:                            # Chapter J: the project's tests before and after
+            spec += (f"\n\n## Project tests\n- before any change: {render_baseline(s.baseline).splitlines()[0]}"
+                     f"\n- now: {render_baseline(s.baseline_after).splitlines()[0]}")
         evidence = {
             "request": s.request,
-            "spec": (s.spec or "").strip(),
+            "spec": spec,
             "tasks": tasks_evidence(s.plan, cfg_sensors.get("evidence_at", 0.3)),
             "final_checks": final_checks_evidence(s.final_checks),
             "files": workspace_contents(run.workspace, file_chars=cfg_judge.get("file_chars", 12000),
@@ -619,6 +705,8 @@ def build_graph(ctx: Context) -> Graph:
             s.error = s.summary["error"]
         elif s.summary is None:     # ended before building (plan_failed)
             s.summary = {"id": s.run_id, "status": s.status, "error": s.error, "plan": _plan_info(s.plan)}
+        if s.options.get("source") and s.summary is not None and s.status != "import_failed":
+            write_changes(run, s)
         # Chapter F: totals from the trace, and one row in runs/index.jsonl
         try:
             s.summary["metrics"] = trace_metrics(load_events(run.dir))
@@ -639,13 +727,47 @@ def build_graph(ctx: Context) -> Graph:
     def after_final_check(s: BuildState) -> str:
         return "judge" if s.options.get("judge", True) else "finish"
 
+    def write_changes(run, s: BuildState) -> None:
+        """Chapter J: CHANGES.patch from the untouched copy to the workspace; the user decides whether to apply it."""
+        if s.options.get("only_review"):
+            s.summary.update(source=s.options["source"])
+            return
+        patch, stats = make_patch(run.dir / "original", run.workspace)
+        (run.dir / "CHANGES.patch").write_text(patch, encoding="utf-8", newline="\n")
+        s.summary.update(source=s.options["source"], review=str(run.dir / "REVIEW.md"),
+                         patch=str(run.dir / "CHANGES.patch"), changes=stats,
+                         baseline=s.baseline, baseline_after=s.baseline_after)
+        n = sum(len(v) for v in stats.values())
+        ctx.say(f"[changes] {n} file(s): {len(stats['changed'])} changed, {len(stats['added'])} added, "
+                f"{len(stats['deleted'])} deleted → {run.dir / 'CHANGES.patch'}")
+        report = run.dir / "REPORT.md"
+        if report.exists():
+            with open(report, "a", encoding="utf-8") as f:
+                f.write("\n## Review and changes\n\n"
+                        f"- Findings: {len((s.review or {}).get('findings', []))} (see `REVIEW.md`)\n"
+                        f"- Project tests before: {render_baseline(s.baseline).splitlines()[0]}\n"
+                        + (f"- Project tests after: {render_baseline(s.baseline_after).splitlines()[0]}\n"
+                           if s.baseline_after else "")
+                        + f"- Changed: {', '.join(stats['changed']) or '—'}\n"
+                          f"- Added: {', '.join(stats['added']) or '—'}\n"
+                          f"- Deleted: {', '.join(stats['deleted']) or '—'}\n\n"
+                          f"Apply the changes to your project with `git apply {run.dir / 'CHANGES.patch'}` "
+                          "(run it in the project folder).\n")
+
+    def after_intake(s: BuildState) -> str:
+        if s.status == "import_failed":
+            return "finish"
+        return "survey" if s.options.get("source") else "plan"
+
     g = Graph(entry="intake")
-    for name, fn in [("intake", intake), ("plan", plan), ("build", build),
+    for name, fn in [("intake", intake), ("survey", survey), ("review", review), ("plan", plan), ("build", build),
                      ("next_task", next_task), ("run_task", run_task), ("verify", verify),
                      ("final_check", final_check), ("judge", judge), ("revise", revise),
                      ("finish", finish)]:
         g.node(name, ctx.tracer.wrap_node(name, fn))
-    g.edge("intake", "plan")
+    g.branch("intake", after_intake, {"survey", "plan", "finish"})
+    g.edge("survey", "review")
+    g.branch("review", lambda s: "finish" if s.options.get("only_review") else "plan", {"plan", "finish"})
     g.branch("plan", after_plan, {"build", "next_task", "finish"})
     g.edge("build", "finish")
     g.branch("next_task", lambda s: "run_task" if s.current_task else "final_check",
@@ -682,6 +804,9 @@ def run_pipeline(
     judge: bool | None = None,
     tags: dict | None = None,
     fix: str | None = None,
+    source: str | None = None,
+    only_review: bool = False,
+    test_command: str | None = None,
     on_enter: Callable[[str, BuildState], None] | None = None,
 ) -> dict:
     """Start a new build, resume one from its state.json, or (`fix`) revise a finished one."""
@@ -722,7 +847,8 @@ def run_pipeline(
         judge_on = ctx.config.get("judge", {}).get("enabled", True) if judge is None else judge
         state = BuildState(request=request, options={"review": review, "no_plan": no_plan,
                                                      "max_iterations": max_iterations, "judge": judge_on,
-                                                     "tags": tags})
+                                                     "tags": tags, "source": source, "only_review": only_review,
+                                                     "test_command": test_command})
         start = None
 
     # Chapter A: wrap from outside — the loop, nodes and tools don't know they're traced

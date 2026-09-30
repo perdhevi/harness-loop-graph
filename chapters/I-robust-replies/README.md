@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with real replies from a failed run — confirm with a real model)
 
-[← Chapter H: A model per role](../../chapters/H-role-models/README.md) · [Index](../../README.md)
+[← Chapter H: A model per role](../../chapters/H-role-models/README.md) · [Index](../../README.md) · [Chapter J: Reviewing and fixing existing code →](../../chapters/J-review-existing/README.md)
 
 ## Read this when
 
@@ -28,6 +28,8 @@ A real run on a to-do CLI:
 | Checks like `python todo_cli.py list > /dev/null && echo ok` accepted | Commands run without a shell, so these can never pass | New plans and revisions reject `&&`, `\|\|`, `\|`, `>`, `<`, `;` (plans already saved still load) |
 | `retry: unknown task 'R1-1'`, three attempts wasted | New task ids listed under `retry` too | They're dropped from `retry`; the reviser is told which tasks it can retry |
 | R6-1's check was T1's check, copied | It already passed, so it could never show the new work | A new task can't reuse a *done* task's check (test-suite commands are allowed) |
+| R9-5's check `echo 'README.md updated …'` → *no exit code* | `echo` isn't a program checks can run (and would test nothing) | A check must start with a program the workspace server allows (`mcp.json` `--allow`); the planner or reviser is told which |
+| 24 tasks, run never accepted: R6-1 failed and its chain stayed blocked while R9-x rebuilt the same work | No way to say "R9-1 replaces R6-1", and a failed or blocked task makes the judge's rule turn every accept into revise | Revisions can `"drop"` failed, blocked or pending tasks; unfinished tasks that depend on them are dropped too. Dropped tasks don't block acceptance and don't count toward the task limit; the summary shows `~ … (dropped in round N)`; a warning appears near the limit |
 | Rounds 1–5 on one failing test | The plan kept tasks in memory while `add` and `list` run as separate processes | Planner and reviser rule: state that must survive between commands goes to a file |
 
 ## What gets built
@@ -36,8 +38,8 @@ A real run on a to-do CLI:
 - `replies.py` — `final-action`: `{"action": "final", …}` → a final answer
 - `tools/registry.py` — calling `final`, `finish` or `answer` as a tool returns how to finish
 - `servers/workspace_server.py` — `edit_file` "not found" shows the closest lines
-- `planner.py` — `command_problems()`, keyless `done_when` repair, clearer `done_when` errors, `retry` clean-up, copied-check rule, the reviser's own retry prompt
-- `prompts.json` — planner and reviser rules; `revise_request` lists retryable tasks; new `revise_fix`
+- `planner.py` — `command_problems()` (shell operators, programs outside the allow list), `drop` in revisions, keyless `done_when` repair, clearer `done_when` errors, `retry` clean-up, copied-check rule, the reviser's own retry prompt
+- `prompts.json` — planner and reviser rules; `revise_request` lists retryable tasks and used task slots; `drop` in the reviser's reply; new `revise_fix`
 - `config.json` — Anthropic `max_tokens` 1024 → 8192, so a file or a revision fits in one reply
 
 ## Rules
@@ -51,7 +53,8 @@ A real run on a to-do CLI:
 - [x] Round 6's real reply parses, and its shell-operator check is sent back with the reason
 - [x] A model that ends with `{"action": "final"}` finishes in one step
 - [x] `edit_file` misses show the lines to copy
-- [x] Retry ids, copied checks and wrong `done_when` keys get specific feedback
+- [x] Retry ids, copied checks, wrong `done_when` keys and checks with programs outside the allow list get specific feedback
+- [x] A run whose failed task was replaced can still be accepted, once the reviser drops the old task
 
 ## How to run
 
@@ -59,7 +62,7 @@ Nothing to switch on. To see the conversions in a run:
 
 ```bash
 python main.py trace runs/<id>           # normalized×N (final-action, …) per task
-python -m unittest discover -s tests -v   # 237 tests, no model needed
+python -m unittest discover -s tests -v   # 244 tests, no model needed
 ```
 
 ## Commit
@@ -70,4 +73,4 @@ chapter I: robust replies and plans — precise JSON errors, final-as-tool, edit
 
 ---
 
-[← Chapter H: A model per role](../../chapters/H-role-models/README.md) · [Index](../../README.md)
+[← Chapter H: A model per role](../../chapters/H-role-models/README.md) · [Index](../../README.md) · [Chapter J: Reviewing and fixing existing code →](../../chapters/J-review-existing/README.md)

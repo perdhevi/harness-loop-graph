@@ -159,8 +159,13 @@ class VerifyFlowTests(unittest.TestCase):
         self.assertIn("regression in T1: `python test_calc.py` → exit 1", s["error"])
 
     def test_refused_check_command_fails_the_task(self):
-        model = FakeModel([plan(task("T1", {"command": "ls"})), final("a"), final("b"), final("c")])
-        s = self.build("x", model=model)
+        # Chapter I: the planner now rejects `ls` up front, so put it in by hand, as a reviewer could
+        planned = self.build("x", review=True, model=FakeModel([plan(task("T1", {"file": "a.txt"}))]))
+        plan_file = Path(planned["run_dir"]) / "plan.json"
+        edited = json.loads(plan_file.read_text())
+        edited["tasks"][0]["done_when"] = {"command": "ls"}
+        plan_file.write_text(json.dumps(edited))
+        s = self.build(None, from_run=planned["run_dir"], model=FakeModel([final("a"), final("b"), final("c")]))
         t1 = self.plan_of(s)["T1"]
         self.assertEqual(t1["status"], "failed")
         self.assertIn("'ls' is not allowed", t1["checks"][0]["output"])

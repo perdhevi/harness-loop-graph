@@ -106,7 +106,7 @@ class SettingsTests(unittest.TestCase):
         warnings = main.check_context_settings(c, say=lambda m: None)
         self.assertEqual(len(warnings), 1)
         self.assertIn(f"{JUDGE} (judge)", warnings[0])
-        self.assertEqual(ollama_models(c)[PLANNER]["roles"], ["planner", "reviser", "compactor"])
+        self.assertEqual(ollama_models(c)[PLANNER]["roles"], ["planner", "reviser", "compactor", "reviewer"])
 
 
 class RoleBuildTests(unittest.TestCase):
@@ -149,7 +149,7 @@ class RoleBuildTests(unittest.TestCase):
         write = json.dumps({"thought": "t", "action": "workspace.write_file", "args": {"path": "hello.txt", "content": "hi"}})
         fake, code, out = self.run_with({PLANNER: [], WORKER: [write], JUDGE: []}, argv=["doctor"])
         self.assertEqual(code, 0, out)
-        for name, roles in [(PLANNER, "planner, reviser, compactor"), (WORKER, "task"), (JUDGE, "judge")]:
+        for name, roles in [(PLANNER, "planner, reviser, compactor, reviewer"), (WORKER, "task"), (JUDGE, "judge")]:
             self.assertIn(f"✓ model {name} is pulled ({roles})", out)
         self.assertEqual(fake.seen, [WORKER])                    # the reply-format check uses the task model
         self.assertIn(f"judge     ollama/{JUDGE}", out)

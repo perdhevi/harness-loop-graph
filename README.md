@@ -24,6 +24,8 @@ export ANTHROPIC_API_KEY=...
 # Then read the result
 cat runs/<id>/REPORT.md
 python main.py build --fix runs/<id> "list crashes on an empty file"   # change a finished run
+python main.py review path/to/project "fix the crash on empty input"   # review + fix an existing project → CHANGES.patch
+python main.py apply runs/<id>                   # …then put the changes back into that folder (--undo to revert)
 python main.py trace runs/<id>
 
 # Measure: replay the benchmark and compare with your baseline
@@ -88,6 +90,7 @@ Read and build these when their symptom appears. Order is a suggestion, apart fr
 | G | [Fixing a finished run](chapters/G-fix-run/README.md) | A build finished, but something is missing or wrong, and you want to change that run instead of starting over. | Stage 10 (judge) | ✅ done |
 | H | [A model per role](chapters/H-role-models/README.md) | One model can't do every job well: good at code but bad at plans or verdicts, or too slow to use everywhere. | Stage 10 (judge) | ✅ done |
 | I | [Robust replies and plans](chapters/I-robust-replies/README.md) | Runs fail on the model's format: parse errors, revisions that escalate, tasks that keep saying "done" until they run out of steps. | Stages 02, 04, 06, 10 | ✅ done |
+| J | [Reviewing and fixing existing code](chapters/J-review-existing/README.md) | You have a project the harness didn't build and want it reviewed or fixed, with changes handed back as a patch. | Stage 10 (judge) | ✅ done |
 
 Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands. Chapter G adds `build --fix`. Chapter H lets each role (planner, task, judge, reviser, compactor) use its own model; without a `roles` setting, one model does everything. Chapter I makes replies and plans from small models far more robust.
 

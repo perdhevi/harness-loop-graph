@@ -18,7 +18,8 @@ from typing import Any, Callable
 
 TRACE_FILE = "trace.jsonl"
 BIG_FIELDS = {"plan", "spec", "summary", "history", "verdicts", "final_checks", "updated_at", "options"}
-ROLE_BY_NODE = {"plan": "planner", "run_task": "task", "build": "task", "judge": "judge", "revise": "reviser"}
+ROLE_BY_NODE = {"plan": "planner", "run_task": "task", "build": "task", "judge": "judge", "revise": "reviser",
+                "review": "reviewer"}
 
 
 def _now_iso() -> str:

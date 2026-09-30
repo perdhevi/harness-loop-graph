@@ -22,7 +22,7 @@ import json
 
 from model_adapter import ADAPTERS, ModelError
 
-ROLES = ("planner", "task", "judge", "reviser", "compactor")
+ROLES = ("planner", "task", "judge", "reviser", "compactor", "reviewer")   # reviewer: Chapter J
 
 
 def role_settings(config: dict, role: str) -> tuple[str, dict]:

@@ -221,5 +221,117 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(command_problems([task("T1", {"command": 'python -c "print(1 > 0)"'})]), [])
 
 
+# ---------------------------------------------------------------- follow-up: allowed programs, dropping tasks
+
+ALLOWED = {"python", "python3", "pip", "pytest", "node", "npm"}
+
+
+class AllowedProgramTests(unittest.TestCase):
+    def test_check_must_start_with_an_allowed_program(self):
+        # R9-5 from a real run: a check that can't even start (and tests nothing)
+        r95 = task("R9-5", {"command": "echo 'README.md updated and final verification complete.'"})
+        problems = command_problems([r95], ALLOWED)
+        self.assertIn("starts with 'echo', which checks can't run; use one of: node, npm, pip, pytest, python, python3",
+                      problems[0])
+        ok = [task("A", {"command": "python.exe -m pytest -q"}), task("B", {"command": "C:/Python312/python.exe t.py"}),
+              task("C", {"command": "pytest"}), task("D", {"file": "README.md"})]
+        self.assertEqual(command_problems(ok, ALLOWED), [])
+        self.assertEqual(command_problems([r95]), [])                     # no list known: not checked
+
+    def test_allowed_programs_come_from_mcp_json(self):
+        from runtime import allowed_programs
+        self.assertEqual(allowed_programs(load_json(ROOT / "config.json")), ALLOWED)
+        self.assertIsNone(allowed_programs({"tools": {}}))
+
+
+def todo_plan():
+    """The shape of the real run: R6-1 failed, the chain after it blocked, R9-x rebuilt beside it."""
+    tasks = [task("T1", {"command": "python -m pytest -q"}, "done"),
+             task("R6-1", {"command": "python -m pytest -q"}, "failed", ["T1"]),
+             task("R6-2", {"file": "cli.md"}, "blocked", ["R6-1"]),
+             task("R6-5", {"file": "docs.md"}, "blocked", ["R6-2"]),
+             task("R7-1", {"file": "README.md"}, "blocked", ["R6-5"]),
+             task("R9-1", {"command": "python -m pytest -q"}, "done", ["T1"])]
+    plan, errors = validate_plan({"title": "Todo", "summary": "s", "tasks": tasks})
+    assert not errors, errors
+    return plan
+
+
+class DropTests(unittest.TestCase):
+    def revise(self, reply, plan=None, max_tasks=12):
+        model = FakeModel([reply])
+        return revise_plan(model, PROMPTS, request="todo", plan=plan or todo_plan(), spec="", plan_status="",
+                           verdict={"feedback": "f", "problems": []}, files="", round_no=10,
+                           max_attempts=1, max_tasks=max_tasks, allowed=ALLOWED), model
+
+    def test_drop_cascades_to_unfinished_dependents(self):
+        (new, record), model = self.revise(json.dumps({"changes": "R9 replaced R6", "drop": ["R6-1"]}))
+        status = {t["id"]: t["status"] for t in new["tasks"]}
+        self.assertEqual(status, {"T1": "done", "R6-1": "dropped", "R6-2": "dropped", "R6-5": "dropped",
+                                  "R7-1": "dropped", "R9-1": "done"})
+        self.assertEqual(record["dropped"], ["R6-1", "R6-2", "R6-5", "R7-1"])
+        self.assertEqual({t["id"]: t.get("dropped_in") for t in new["tasks"]}["R7-1"], 10)
+        self.assertIn("Tasks you can retry (failed or blocked): R6-1, R6-2, R6-5, R7-1", model.calls[0][0]["content"])
+        from planner import revision_section
+        self.assertIn("**Dropped (replaced or no longer needed):** R6-1, R6-2, R6-5, R7-1",
+                      revision_section(record, {"feedback": "f"}, new))
+
+    def test_done_tasks_cannot_be_dropped(self):
+        with self.assertRaisesRegex(PlanError, "drop: task 'T1' is done"):
+            self.revise(json.dumps({"changes": "c", "drop": ["T1"]}))
+
+    def test_judge_rule_and_finish_ignore_dropped_tasks(self):
+        from judge import apply_rules
+        (new, _), _ = self.revise(json.dumps({"changes": "c", "drop": ["R6-1"]}))
+        v = {"verdict": "accept", "requirements": [{"requirement": "undo", "met": True, "evidence": "R9-1"}]}
+        self.assertEqual(apply_rules(v, new, [], revisions_used=0, max_revisions=2)["verdict"], "accept")
+
+    def test_dropped_tasks_free_their_slots(self):
+        plan = todo_plan()
+        extra = [task(f"R10-{i}", {"file": f"f{i}.md"}, deps=["T1"]) for i in range(1, 5)]   # 6 + 4 = 10 > 2 × 4
+        with self.assertRaisesRegex(PlanError, "too many tasks"):
+            self.revise(json.dumps({"changes": "c", "tasks": extra}), plan, max_tasks=4)
+        (new, _), _ = self.revise(json.dumps({"changes": "c", "drop": ["R6-1"], "tasks": extra[:2]}), plan, max_tasks=3)
+        self.assertEqual(sum(1 for t in new["tasks"] if t["status"] != "dropped"), 4)
+
+
+class DropFlowTests(unittest.TestCase):
+    """A failed task used to make every later verdict 'revise'; dropping it lets the run be accepted."""
+
+    def test_accepted_after_dropping_the_replaced_task(self):
+        import contextlib
+        import io
+        from unittest import mock
+        import main
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        config = json.loads((ROOT / "config.json").read_text())
+        config["build"]["task_max_iterations"] = 2
+        (tmp / "config.json").write_text(json.dumps(config))
+
+        def j(**kw):
+            return json.dumps(kw)
+        write = j(thought="w", action="workspace.write_file", args={"path": "a.py", "content": "x = 1\n"})
+        look = j(thought="l", action="workspace.list_dir", args={})
+        accept = j(verdict="accept", requirements=[{"requirement": "a", "met": True, "evidence": "a.py"}],
+                   problems=[], feedback="", summary="ok")
+        model = FakeModel([
+            j(title="A", summary="s", tasks=[task("T1", {"file": "a.py"}), task("T2", {"file": "b.py"}, deps=["T1"])]),
+            write, j(thought="d", final="a"),                  # T1 done
+            look, look,                                        # T2 runs out of steps → failed
+            accept,                                            # overridden to revise: T2 failed
+            j(changes="b.py isn't needed", drop=["T2"]),       # the reviser drops it
+            accept,                                            # nothing left to do → judged again
+        ])
+        with mock.patch.object(main, "ROOT", tmp), mock.patch.object(main, "CONFIG_PATH", tmp / "config.json"), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            s = main.run_build("a", model=model, verbose_graph=False)
+            main.print_summary(s)
+        self.assertEqual(s["status"], "accepted")
+        self.assertEqual({t["id"]: t["status"] for t in s["tasks"]}, {"T1": "done", "T2": "dropped"})
+        self.assertIn("~ T2", out.getvalue())
+        self.assertIn("(dropped in round 1)", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,11 @@ Usage:
     python main.py build --from-run runs/<id>     # build from a reviewed (maybe edited) plan
     python main.py build --resume runs/<id>       # continue a run that was stopped or crashed
     python main.py build --fix runs/<id> "..."    # change a finished run: your feedback → revise → build → judge
+    python main.py review PATH "what to fix"       # review an existing project, fix it, write CHANGES.patch (Chapter J)
+    python main.py review PATH --only-review "..." # findings only: REVIEW.md, no changes
+    python main.py review PATH "..." --apply       # … and copy the changes back if the run is accepted
+    python main.py apply runs/<id> [--dry-run]     # copy a review run's changes back into the original folder
+    python main.py apply --undo runs/<id>          # put the folder back the way it was
     python main.py build --no-plan "..."          # Stage 5 behaviour
     python main.py build --no-judge "..."         # Stage 9 behaviour (checks, no judge)
     python main.py build --max-iterations 60 "..."
@@ -137,7 +142,8 @@ def make_store(config: dict) -> LessonStore | None:
 def run_build(request: str | None, max_iterations: int | None = None, *, model=None,
               ask=None, review: bool = False, from_run: str | None = None, no_plan: bool = False,
               judge: bool | None = None, verbose_graph: bool = True, config: dict | None = None,
-              tags: dict | None = None, quiet: bool = False, fix: str | None = None) -> dict:
+              tags: dict | None = None, quiet: bool = False, fix: str | None = None,
+              source: str | None = None, only_review: bool = False, test_command: str | None = None) -> dict:
     """Plan and build through the graph. `from_run` resumes a paused or stopped run.
 
     `config` overrides config.json (Chapter F: benchmarks pick provider/model); `tags` go to the run index.
@@ -163,6 +169,7 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
     on_enter = (lambda name, state: print(f"[graph] → {name}")) if verbose_graph else None
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
                         max_iterations=max_iterations, judge=judge, tags=tags, fix=fix,
+                        source=source, only_review=only_review, test_command=test_command,
                         on_enter=None if quiet else on_enter)
 
 
@@ -172,6 +179,15 @@ def print_summary(s: dict) -> None:
         print(f"Planned: {s['plan']['title']} ({s['plan']['tasks']} tasks). Nothing built yet.")
         print(f"Review  : {s['run_dir']}/SPEC.md and plan.json (edit either if you like)")
         print(f"Build   : python main.py build --from-run {s['run_dir']}")
+        return
+    if s["status"] == "import_failed":
+        print(f"Import failed: {s['error']}")
+        return
+    if s["status"] == "reviewed":
+        print(f"Reviewed: {s['findings']} finding(s). Nothing was changed.")
+        print(f"Review  : {s['review']}")
+        print(f"Fix     : python main.py review {s.get('source', '<path>')} \"<what to fix>\"")
+        print(f"run     : {s['run_dir']}")
         return
     if s["status"] == "plan_failed":
         print(f"Planning failed: {s['error']}")
@@ -229,6 +245,18 @@ def print_summary(s: dict) -> None:
     print(f"run      : {s['run_dir']}")
     if s.get("report"):
         print(f"report   : {s['report']}")
+    if s.get("patch"):                                  # Chapter J
+        ch = s.get("changes") or {}
+        print(f"review   : {s['review']}")
+        if s.get("baseline_after"):
+            before = "passed" if (s.get("baseline") or {}).get("ok") else "failed"
+            print(f"tests    : project tests {'pass' if s['baseline_after']['ok'] else 'FAIL'} now (before: {before})")
+        print(f"changes  : {len(ch.get('changed', []))} changed, {len(ch.get('added', []))} added, "
+              f"{len(ch.get('deleted', []))} deleted → {s['patch']}")
+        applied = s.get("applied")
+        if not applied:
+            print(f"apply    : python main.py apply {s['run_dir']}   (your folder is unchanged until you do; "
+                  "or git apply the patch)")
 
 
 # ---------------------------------------------------------------- CLI
@@ -281,8 +309,88 @@ def main_build(argv: list[str]) -> int:
         print(f"[error] {e}")
         return 1
     print_summary(summary)
-    return {"accepted": 0, "finished": 0, "planned": 0, "max_iterations": 2, "partial": 2,
+    return {"accepted": 0, "finished": 0, "planned": 0, "reviewed": 0, "max_iterations": 2, "partial": 2,
             "escalated": 3}.get(summary["status"], 1)
+
+
+def main_review(argv: list[str]) -> int:
+    """Chapter J: review an existing project (a copy of it), fix what's asked, and write CHANGES.patch."""
+    parser = argparse.ArgumentParser(prog="main.py review", description="Review and fix an existing project")
+    parser.add_argument("path", help="the project folder (it is copied; the original is not changed)")
+    parser.add_argument("request", nargs="*", help="what to look at or fix")
+    parser.add_argument("--only-review", action="store_true", help="write REVIEW.md and stop; change nothing")
+    parser.add_argument("--test", metavar="COMMAND", help="the command that runs the project's tests (default: detected)")
+    parser.add_argument("--yes", action="store_true", help="never ask questions")
+    parser.add_argument("--no-judge", action="store_true")
+    parser.add_argument("--max-iterations", type=int, default=None)
+    parser.add_argument("--apply", action="store_true",
+                        help="copy the changes back into PATH when the run ends accepted (or finished, with --no-judge)")
+    args = parser.parse_intermixed_args(argv)          # options may come after the path or the request
+    if args.apply and args.only_review:
+        parser.error("--apply has nothing to apply with --only-review")
+    if not Path(args.path).expanduser().is_dir():
+        print(f"[error] not a folder: {args.path}")
+        return 1
+    request = " ".join(args.request).strip() or input("what should the review look at or fix> ").strip()
+    if not request:
+        request = "Review the project for bugs and fix what you find."
+    interactive = sys.stdin.isatty() and not args.yes
+    try:
+        summary = run_build(request, args.max_iterations, ask=ask_in_terminal if interactive else None,
+                            judge=False if args.no_judge else None, source=str(Path(args.path).expanduser().resolve()),
+                            only_review=args.only_review, test_command=args.test)
+    except RunStopped as e:
+        what = "interrupted" if isinstance(e.cause, KeyboardInterrupt) else f"stopped: {type(e.cause).__name__}: {e}"
+        print(f"\n[{what}]")
+        if e.run_dir:
+            print(f"Resume with: python main.py build --resume {e.run_dir}")
+        return 130 if isinstance(e.cause, KeyboardInterrupt) else 1
+    except (ModelError, McpError, PlanError, FileNotFoundError) as e:
+        print(f"[error] {e}")
+        return 1
+    print_summary(summary)
+    if args.apply:
+        from apply import GOOD_STATUSES
+        if summary["status"] in GOOD_STATUSES:
+            code = main_apply([summary["run_dir"]])
+            if code:
+                return code
+        else:
+            print(f"apply    : skipped, the run ended '{summary['status']}'. When you're happy with it: "
+                  f"python main.py apply --force {summary['run_dir']}")
+    return {"accepted": 0, "finished": 0, "reviewed": 0, "max_iterations": 2, "partial": 2,
+            "escalated": 3}.get(summary["status"], 1)
+
+
+def main_apply(argv: list[str]) -> int:
+    """Chapter J: copy a review run's changes back into the folder it came from (or undo that)."""
+    from apply import ApplyError, apply_run, undo_apply
+    parser = argparse.ArgumentParser(prog="main.py apply", description="Put a review run's changes back")
+    parser.add_argument("run_dir")
+    parser.add_argument("--undo", action="store_true", help="restore the files apply changed, from the run's backup")
+    parser.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
+    parser.add_argument("--force", action="store_true",
+                        help="apply a run that didn't end accepted/finished, or undo over later edits")
+    args = parser.parse_intermixed_args(argv)
+    try:
+        if args.undo:
+            done = undo_apply(args.run_dir, force=args.force)
+            print(f"undone   : {len(done['changed']) + len(done['deleted'])} file(s) restored, "
+                  f"{len(done['added'])} added file(s) removed in {done['to']}")
+            return 0
+        p = apply_run(args.run_dir, force=args.force, dry_run=args.dry_run)
+    except (ApplyError, FileNotFoundError, ValueError) as e:
+        print(f"[apply] {e}")
+        return 1
+    n = len(p["changed"]) + len(p["added"]) + len(p["deleted"])
+    verb = "would change" if args.dry_run else "applied"
+    print(f"apply    : {verb} {n} file(s) in {p['source']}")
+    for kind, mark in (("changed", "M"), ("added", "A"), ("deleted", "D")):
+        for rel in p[kind]:
+            print(f"   {mark} {rel}")
+    if n and not args.dry_run:
+        print(f"undo     : python main.py apply --undo {Path(args.run_dir).resolve()}")
+    return 0
 
 
 def main_trace(argv: list[str]) -> int:
@@ -513,6 +621,10 @@ def main(argv: list[str] | None = None) -> int:
         return main_doctor(argv[1:])
     if argv[:1] == ["build"]:
         return main_build(argv[1:])
+    if argv[:1] == ["review"]:
+        return main_review(argv[1:])
+    if argv[:1] == ["apply"]:
+        return main_apply(argv[1:])
     if argv[:1] == ["trace"]:
         return main_trace(argv[1:])
     if argv[:1] == ["memory"]:
