@@ -21,6 +21,14 @@
       ],
       "timeout_s": 60,
       "enabled": false
+    },
+    "remote-example": {
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${EXAMPLE_MCP_TOKEN}"
+      },
+      "timeout_s": 60,
+      "enabled": false
     }
   }
 }

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tools.local import LocalToolSource
 from tools.mcp_client import McpClient, McpToolSource, load_servers
+from tools.mcp_http import HttpMcpClient
 from tools.registry import ToolRegistry
 
 ROOT = Path(__file__).parent
@@ -49,8 +50,12 @@ def build_registry(config: dict, workspace: Path, stack: contextlib.ExitStack) -
         registry.add_source(LocalToolSource(ROOT / tools_cfg["local"]))
     if tools_cfg.get("mcp"):
         for name, srv in load_servers(ROOT / tools_cfg["mcp"], workspace).items():
-            client = stack.enter_context(McpClient(
-                name, srv["command"], srv["args"], env=srv["env"], cwd=ROOT, timeout_s=srv["timeout_s"]))
+            if "url" in srv:                            # Chapter K: a remote server over Streamable HTTP
+                client = stack.enter_context(HttpMcpClient(name, srv["url"], headers=srv["headers"],
+                                                           timeout_s=srv["timeout_s"]))
+            else:
+                client = stack.enter_context(McpClient(
+                    name, srv["command"], srv["args"], env=srv["env"], cwd=ROOT, timeout_s=srv["timeout_s"]))
             client.initialize()
             registry.add_source(McpToolSource(client))
     return registry

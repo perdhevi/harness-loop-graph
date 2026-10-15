@@ -549,11 +549,21 @@ def main_doctor(argv: list[str]) -> int:
     warnings = check_context_settings(config, say=lambda m: None)
     report(not warnings, "context window matches what the model is given", "; ".join(warnings))
 
+    mcp_path = config.get("tools", {}).get("mcp")
+    if mcp_path:                                         # Chapter K: local (stdio) and remote (http) servers
+        import runtime
+        from tools.mcp_client import load_servers
+        try:
+            servers = load_servers(runtime.ROOT / mcp_path, runtime.ROOT)   # the same file build_registry reads
+            print("mcp servers: " + ", ".join(f"{n} ({'http ' + s['url'] if 'url' in s else 'stdio'})"
+                                              for n, s in servers.items()))
+        except (McpError, OSError, ValueError) as e:
+            report(False, "mcp.json", str(e))
     print("workspace server")
     with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
         try:
             tools = build_registry(config, Path(tmp), stack)
-            report(True, "starts")
+            report(True, "starts" + (" (and every MCP server in mcp.json connects)" if mcp_path else ""))
             wrote = tools.call("workspace.write_file", {"path": "check.py", "content": "print('ok ✓ — Ёлка')\n"})
             report(not wrote.startswith("Error"), "writes a file with non-ASCII text", wrote[:200])
             back = (Path(tmp) / "check.py").read_text(encoding="utf-8")

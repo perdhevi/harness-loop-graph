@@ -14,6 +14,7 @@ import collections
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -35,7 +36,80 @@ class McpToolError(RuntimeError):
     """The tool ran and reported isError=true."""
 
 
-class McpClient:
+class McpSession:
+    """What every MCP transport shares: the handshake, tools/list, tools/call and answers to server requests.
+
+    A transport provides _request(method, params, timeout_s) -> result and _notify(method) (Chapter K
+    added HTTP next to stdio).
+    """
+
+    name: str
+    timeout_s: float
+    server_info: dict
+    protocol_version: str = PROTOCOL_VERSION
+
+    def initialize(self) -> dict:
+        result = self._request("initialize", {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": CLIENT_INFO,
+        })
+        self.server_info = result.get("serverInfo", {})
+        self.protocol_version = result.get("protocolVersion") or PROTOCOL_VERSION
+        self._notify("notifications/initialized")
+        return result
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def list_tools(self) -> list[dict]:
+        tools, cursor = [], None
+        while True:
+            result = self._request("tools/list", {"cursor": cursor} if cursor else {})
+            tools.extend(result.get("tools", []))
+            cursor = result.get("nextCursor")
+            if not cursor:
+                return tools
+
+    def call_tool(self, name: str, arguments: dict, timeout_s: float | None = None) -> str:
+        result = self._request("tools/call", {"name": name, "arguments": arguments}, timeout_s)
+        parts = []
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                parts.append(block.get("text", ""))
+            else:
+                parts.append(f"[{block.get('type', 'unknown')} content]")
+        if not parts and "structuredContent" in result:
+            parts.append(json.dumps(result["structuredContent"], ensure_ascii=False))
+        text = "\n".join(parts)
+        if result.get("isError"):
+            raise McpToolError(text or "tool reported an error")
+        return text
+
+    @staticmethod
+    def _server_reply(msg: dict) -> dict:
+        """Our answer to a request the server sends us: ping is supported, nothing else is."""
+        if msg["method"] == "ping":
+            return {"jsonrpc": "2.0", "id": msg["id"], "result": {}}
+        return {"jsonrpc": "2.0", "id": msg["id"],
+                "error": {"code": -32601, "message": f"client does not support {msg['method']}"}}
+
+    def _request(self, method: str, params: dict, timeout_s: float | None = None) -> dict:
+        raise NotImplementedError
+
+    def _notify(self, method: str) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class McpClient(McpSession):
+    """MCP over stdio: the server is a local process."""
+
     def __init__(self, name: str, command: str, args: list[str], *,
                  env: dict | None = None, cwd: str | Path | None = None, timeout_s: float = 60):
         self.name = name
@@ -61,15 +135,8 @@ class McpClient:
 
     # ------------------------------------------------------------ lifecycle
 
-    def initialize(self) -> dict:
-        result = self._request("initialize", {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": CLIENT_INFO,
-        })
-        self.server_info = result.get("serverInfo", {})
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        return result
+    def _notify(self, method: str) -> None:
+        self._send({"jsonrpc": "2.0", "method": method})
 
     def close(self) -> None:
         if self._proc.poll() is None:
@@ -88,38 +155,6 @@ class McpClient:
                 pipe.close()
             except (OSError, ValueError):
                 pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-
-    # ------------------------------------------------------------ tools
-
-    def list_tools(self) -> list[dict]:
-        tools, cursor = [], None
-        while True:
-            result = self._request("tools/list", {"cursor": cursor} if cursor else {})
-            tools.extend(result.get("tools", []))
-            cursor = result.get("nextCursor")
-            if not cursor:
-                return tools
-
-    def call_tool(self, name: str, arguments: dict, timeout_s: float | None = None) -> str:
-        result = self._request("tools/call", {"name": name, "arguments": arguments}, timeout_s)
-        parts = []
-        for block in result.get("content", []):
-            if block.get("type") == "text":
-                parts.append(block.get("text", ""))
-            else:
-                parts.append(f"[{block.get('type', 'unknown')} content]")
-        if not parts and "structuredContent" in result:
-            parts.append(json.dumps(result["structuredContent"], ensure_ascii=False))
-        text = "\n".join(parts)
-        if result.get("isError"):
-            raise McpToolError(text or "tool reported an error")
-        return text
 
     # ------------------------------------------------------------ transport
 
@@ -197,13 +232,8 @@ class McpClient:
     def _handle_server_message(self, msg: dict) -> None:
         if "id" not in msg:
             return  # notification (logging, progress, list_changed): ignored for now
-        if msg["method"] == "ping":
-            reply = {"jsonrpc": "2.0", "id": msg["id"], "result": {}}
-        else:
-            reply = {"jsonrpc": "2.0", "id": msg["id"],
-                     "error": {"code": -32601, "message": f"client does not support {msg['method']}"}}
         try:
-            self._send(reply)
+            self._send(self._server_reply(msg))
         except McpError:
             pass
 
@@ -224,7 +254,7 @@ class McpClient:
 class McpToolSource:
     """Exposes one MCP server's tools to the registry as '<server>.<tool>'."""
 
-    def __init__(self, client: McpClient):
+    def __init__(self, client: McpSession):
         self.client = client
         self._specs = [
             ToolSpec(
@@ -243,8 +273,23 @@ class McpToolSource:
         return self.client.call_tool(name[len(prefix):] if name.startswith(prefix) else name, args)
 
 
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_env(server: str, key: str, value: str) -> str:
+    """'Bearer ${MY_TOKEN}' → 'Bearer <value of MY_TOKEN>', so secrets stay out of mcp.json (Chapter K)."""
+    def sub(m):
+        if m.group(1) not in os.environ:
+            raise McpError(f"[{server}] {key} needs the environment variable {m.group(1)}, which isn't set")
+        return os.environ[m.group(1)]
+    return _ENV_REF.sub(sub, value)
+
+
 def load_servers(path: str | Path, workspace: str | Path) -> dict[str, dict]:
-    """Read mcp.json, keep enabled servers, fill in {python} and {workspace}."""
+    """Read mcp.json, keep enabled servers, fill in {python} and {workspace}.
+
+    A server with "url" is remote (Streamable HTTP, Chapter K); one with "command" is a local process.
+    """
     with open(path, encoding="utf-8") as f:
         servers = json.load(f).get("servers", {})
     ws = str(Path(workspace).resolve())
@@ -255,6 +300,13 @@ def load_servers(path: str | Path, workspace: str | Path) -> dict[str, dict]:
     out = {}
     for name, cfg in servers.items():
         if not cfg.get("enabled", True):
+            continue
+        if cfg.get("url"):
+            out[name] = {
+                "url": fill(cfg["url"]),
+                "headers": {k: _expand_env(name, f"header {k}", str(v)) for k, v in cfg.get("headers", {}).items()},
+                "timeout_s": cfg.get("timeout_s", 60),
+            }
             continue
         out[name] = {
             "command": fill(cfg["command"]),

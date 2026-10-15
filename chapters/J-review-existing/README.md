@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested with a scripted model and a sample project with a planted bug — confirm with a real model)
 
-[← Chapter I: Robust replies and plans](../../chapters/I-robust-replies/README.md) · [Index](../../README.md)
+[← Chapter I: Robust replies and plans](../../chapters/I-robust-replies/README.md) · [Index](../../README.md) · [Chapter K: Remote MCP servers →](../../chapters/K-remote-mcp/README.md)
 
 ## Read this when
 
@@ -122,4 +122,4 @@ chapter J: review and fix existing code — import a copy, baseline tests, read-
 
 ---
 
-[← Chapter I: Robust replies and plans](../../chapters/I-robust-replies/README.md) · [Index](../../README.md)
+[← Chapter I: Robust replies and plans](../../chapters/I-robust-replies/README.md) · [Index](../../README.md) · [Chapter K: Remote MCP servers →](../../chapters/K-remote-mcp/README.md)
