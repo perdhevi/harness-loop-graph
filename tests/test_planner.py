@@ -189,11 +189,11 @@ class BuildFlowTests(unittest.TestCase):
         self.assertFalse((run_dir / "summary.json").exists())
 
         # a human edits the plan and the spec
-        plan = json.loads((run_dir / "plan.json").read_text())
+        plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
         plan["tasks"][0]["title"] = "Greeter module (edited by reviewer)"
         (run_dir / "plan.json").write_text(json.dumps(plan))
         spec = run_dir / "SPEC.md"
-        spec.write_text(spec.read_text() + "\nReviewer note: greet in Indonesian too.\n")
+        spec.write_text(spec.read_text(encoding="utf-8") + "\nReviewer note: greet in Indonesian too.\n", encoding="utf-8")
 
         # Stage 8: one loop per task — T1 writes a file and finishes, T2 finishes
         model = FakeModel([write("app.py", "print('halo')\n"), final("app.py prints halo"),
@@ -222,8 +222,8 @@ class BuildFlowTests(unittest.TestCase):
         s = self.quiet(main.run_build, "x", model=FakeModel(["a", "b", "c"]))
         self.assertEqual(s["status"], "plan_failed")
         run_dir = Path(s["run_dir"])
-        self.assertEqual(json.loads((run_dir / "summary.json").read_text())["status"], "plan_failed")
-        self.assertEqual(len((run_dir / "planner.jsonl").read_text().splitlines()), 3)
+        self.assertEqual(json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))["status"], "plan_failed")
+        self.assertEqual(len((run_dir / "planner.jsonl").read_text(encoding="utf-8").splitlines()), 3)
 
 
 if __name__ == "__main__":

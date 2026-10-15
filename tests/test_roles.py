@@ -23,7 +23,7 @@ PLANNER, WORKER, JUDGE = "qwen3:8b", "gemma4:e4b", "mistral:7b"
 
 
 def base_config(url="http://127.0.0.1:1"):
-    c = json.loads((ROOT / "config.json").read_text())
+    c = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     c["provider"] = "ollama"
     c["providers"]["ollama"].update(base_url=url, model=PLANNER, num_ctx=16384)
     c["roles"] = {"planner": {}, "reviser": {}, "task": {"model": WORKER, "think": None},
@@ -141,7 +141,7 @@ class RoleBuildTests(unittest.TestCase):
         self.assertEqual(fake.seen, [PLANNER, WORKER, WORKER, JUDGE])
         self.assertEqual(s["metrics"]["models"], {"planner": [PLANNER], "task": [WORKER], "judge": [JUDGE]})
         self.assertIn(f"({JUDGE})", render(load_events(s["run_dir"])))
-        request = json.loads((Path(s["run_dir"]) / "request.json").read_text())
+        request = json.loads((Path(s["run_dir"]) / "request.json").read_text(encoding="utf-8"))
         self.assertEqual((request["model"], request["roles"]["judge"]), (WORKER, f"ollama/{JUDGE}"))
         self.assertEqual(metrics(load_events(s["run_dir"]))["model_calls"], {"planner": 1, "task": 2, "judge": 1})
 

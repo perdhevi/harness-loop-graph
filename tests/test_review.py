@@ -70,7 +70,7 @@ class Harness(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
         self.project = copy_sample(self.tmp / "project")
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["build"]["task_max_iterations"] = 4
         config["review"]["max_iterations"] = 5
         (self.tmp / "config.json").write_text(json.dumps(config))
@@ -107,10 +107,10 @@ class ReviewFlowTests(Harness):
         review_md = (run / "REVIEW.md").read_text(encoding="utf-8")
         self.assertIn("| F1 | high | `stats.py:5` | average() subtracts 1 |", review_md)
         self.assertIn("FAILED (exit 1)", review_md)                              # the baseline, before any change
-        steps = [json.loads(x) for x in (run / "transcript.jsonl").read_text().splitlines()]
+        steps = [json.loads(x) for x in (run / "transcript.jsonl").read_text(encoding="utf-8").splitlines()]
         blocked = [x for x in steps if x.get("phase") == "review" and x.get("action") == "workspace.write_file"]
         self.assertIn("not available while reviewing", blocked[0]["observation"])
-        self.assertIn(BUG, (run / "original" / "stats.py").read_text())        # the copy the patch is made against
+        self.assertIn(BUG, (run / "original" / "stats.py").read_text(encoding="utf-8"))        # the copy the patch is made against
 
         # the planner saw the findings and the baseline
         spec = (run / "SPEC.md").read_text(encoding="utf-8")
@@ -129,7 +129,7 @@ class ReviewFlowTests(Harness):
         # the user's folder is unchanged until the patch is applied; then the tests pass
         self.assertEqual({p.name: p.read_bytes() for p in self.project.iterdir()}, before)
         subprocess.run(["git", "apply", str(run / "CHANGES.patch")], cwd=self.project, check=True)
-        self.assertIn(FIXED, (self.project / "stats.py").read_text())
+        self.assertIn(FIXED, (self.project / "stats.py").read_text(encoding="utf-8"))
         res = subprocess.run([sys.executable, "-m", "unittest", "-q"], cwd=self.project, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stderr)
 
@@ -148,7 +148,7 @@ class ReviewFlowTests(Harness):
         self.assertIn("Reviewed: 1 finding(s). Nothing was changed.", out)
 
     def test_project_tests_that_passed_must_still_pass(self):
-        (self.project / "stats.py").write_text((self.project / "stats.py").read_text().replace(BUG, FIXED))
+        (self.project / "stats.py").write_text((self.project / "stats.py").read_text(encoding="utf-8").replace(BUG, FIXED))
         plan = j(title="Tidy", summary="s", tasks=[
             {"id": "T1", "title": "Tidy largest()", "description": "d", "files": ["stats.py"], "depends_on": [],
              "done_when": {"command": "python -c \"import stats\""}}])
@@ -233,8 +233,8 @@ class HelperTests(unittest.TestCase):
         shutil.copytree(a, target)
         (self.tmp / "p.patch").write_text(patch, newline="\n")
         subprocess.run(["git", "apply", str(self.tmp / "p.patch")], cwd=target, check=True)
-        self.assertEqual((target / "pkg" / "m.py").read_text(), "one\nTWO\n")
-        self.assertEqual((target / "new.txt").read_text(), "hi")
+        self.assertEqual((target / "pkg" / "m.py").read_text(encoding="utf-8"), "one\nTWO\n")
+        self.assertEqual((target / "new.txt").read_text(encoding="utf-8"), "hi")
         self.assertFalse((target / "old.txt").exists())
         self.assertEqual(make_patch(a, a), ("", {"changed": [], "added": [], "deleted": []}))
 

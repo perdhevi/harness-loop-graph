@@ -79,8 +79,8 @@ def one_task_plan(fname, check):
          "done_when": {"command": check}}]})
 
 
-GREET_OK = (REF / "greet" / "greet.py").read_text()
-STATS_OK = (REF / "word-stats" / "stats.py").read_text()
+GREET_OK = (REF / "greet" / "greet.py").read_text(encoding="utf-8")
+STATS_OK = (REF / "word-stats" / "stats.py").read_text(encoding="utf-8")
 STATS_BAD = "import sys\ntext = open(sys.argv[1]).read()\nprint(f'{len(text.split())} words')\n"
 
 
@@ -103,7 +103,7 @@ class BenchTests(unittest.TestCase):
         # a small suite with two real cases from core
         bench_dir = self.root / "bench"
         (bench_dir / "accept").mkdir(parents=True)
-        core = json.loads(CORE.read_text())
+        core = json.loads(CORE.read_text(encoding="utf-8"))
         for f in ("greet.py", "word_stats.py"):
             shutil.copy(CORE.parent / "accept" / f, bench_dir / "accept" / f)
         small = {"name": "mini", "judge": False, "cases": [c for c in core["cases"] if c["id"] in ("greet", "word-stats")]}
@@ -187,7 +187,7 @@ class BenchTests(unittest.TestCase):
 
     def test_run_index(self):
         self.bench({"greet": script_for("greet"), "word-stats": script_for("word-stats")})
-        rows = [json.loads(x) for x in (self.root / "runs" / "index.jsonl").read_text().splitlines()]
+        rows = [json.loads(x) for x in (self.root / "runs" / "index.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual([r["bench"]["case"] for r in rows], ["greet", "word-stats"])
         self.assertEqual(rows[0]["status"], "finished")
         self.assertEqual(rows[0]["model_calls"], {"planner": 1, "task": 2})
@@ -218,7 +218,7 @@ class BenchTests(unittest.TestCase):
         self.assertEqual(set(seen), {"claude-test"})
         self.assertIn("baseline : saved", out.getvalue())
         self.assertIn("✗ word-stats: pass rate 100% → 0%", out.getvalue())
-        base = json.loads((self.suite_path.parent / "baselines" / "mini-cli.json").read_text())
+        base = json.loads((self.suite_path.parent / "baselines" / "mini-cli.json").read_text(encoding="utf-8"))
         self.assertEqual((base["provider"], base["model"]), ("anthropic", "claude-test"))
 
 

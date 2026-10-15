@@ -50,7 +50,7 @@ class RunFolderTests(unittest.TestCase):
             self.assertEqual(r2.id, "20260929-010203-make-a-calculator-2")
             self.assertTrue(r1.workspace.is_dir())
             self.assertEqual(list(r1.workspace.iterdir()), [])
-            req = json.loads(r1.request_file.read_text())
+            req = json.loads(r1.request_file.read_text(encoding="utf-8"))
             self.assertEqual((req["request"], req["model"]), ("Make a calculator", "m"))
 
 
@@ -71,7 +71,7 @@ class ExecuteBuildTests(unittest.TestCase):
                              max_iterations=max_iterations, format_reminder="bad ({error})")
 
     def transcript(self):
-        return [json.loads(line) for line in self.run.transcript.read_text().splitlines()]
+        return [json.loads(line) for line in self.run.transcript.read_text(encoding="utf-8").splitlines()]
 
     def test_successful_build(self):
         s = self.build([
@@ -88,7 +88,7 @@ class ExecuteBuildTests(unittest.TestCase):
         self.assertEqual([f["path"] for f in s["files"]], ["README.md", "greet.py"])
         self.assertEqual(s["model_calls"], 5)
         self.assertGreater(s["approx_tokens_in"], 0)
-        self.assertEqual(json.loads(self.run.summary_file.read_text())["status"], "finished")
+        self.assertEqual(json.loads(self.run.summary_file.read_text(encoding="utf-8"))["status"], "finished")
         lines = self.transcript()
         self.assertEqual(len(lines), 5)
         self.assertIn("hi", lines[3]["observation"])

@@ -179,7 +179,7 @@ class JudgeFlowTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         tmp = Path(self.tmp.name)
-        self.config = json.loads((ROOT / "config.json").read_text())
+        self.config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         self.config["build"]["task_max_iterations"] = 3
         self.config["judge"]["max_revisions"] = 1
         (tmp / "config.json").write_text(json.dumps(self.config))
@@ -205,7 +205,7 @@ class JudgeFlowTests(unittest.TestCase):
         judge_prompt = model.calls[-1]["messages"][0]["content"]
         self.assertIn("def add(a, b):", judge_prompt)                 # the judge saw the code
         self.assertIn("T1 task T1 — done", judge_prompt)
-        report = (Path(s["run_dir"]) / "REPORT.md").read_text()
+        report = (Path(s["run_dir"]) / "REPORT.md").read_text(encoding="utf-8")
         self.assertIn("**accepted**", report)
         self.assertIn("| adds two numbers | ✅ | calc.py |", report)
         self.assertIn('Run: python -c "import calc', report)           # how to run, from the README
@@ -226,9 +226,9 @@ class JudgeFlowTests(unittest.TestCase):
         run_dir = Path(s["run_dir"])
         st = load_state(run_dir)
         self.assertEqual([v["verdict"] for v in st.verdicts], ["revise", "accept"])
-        plan_now = json.loads((run_dir / "plan.json").read_text())
+        plan_now = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
         self.assertEqual([(t["id"], t["status"]) for t in plan_now["tasks"]], [("T1", "done"), ("R1-1", "done")])
-        spec = (run_dir / "SPEC.md").read_text()
+        spec = (run_dir / "SPEC.md").read_text(encoding="utf-8")
         self.assertIn("## Revision 1", spec)
         self.assertIn("**Why:** Add a README.md", spec)
         self.assertIn("| R1-1 | task R1-1 | T1 | `README.md` exists |", spec)
@@ -266,7 +266,7 @@ class JudgeFlowTests(unittest.TestCase):
         v = s["verdict"]
         self.assertEqual(v["overrides"][-1]["to"], "escalate")
         self.assertIn("no revision rounds left (1/1 used)", v["overrides"][-1]["reason"])
-        report = (Path(s["run_dir"]) / "REPORT.md").read_text()
+        report = (Path(s["run_dir"]) / "REPORT.md").read_text(encoding="utf-8")
         self.assertIn("**escalated**", report)
         self.assertIn("| subtracts | ❌ |", report)
         self.assertIn("subtract is still wrong", report)

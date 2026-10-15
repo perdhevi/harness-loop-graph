@@ -64,7 +64,7 @@ class ProjectMapTests(unittest.TestCase):
             (ws / "todo.py").write_text("DB = 1\n\ndef add(items, text):\n    pass\n\nclass Store:\n"
                                         "    def get(self, key): pass\n    def put(self, key, value): pass\n")
             (ws / "broken.py").write_text("def x(:\n")
-            (ws / "README.md").write_text("\n# To-do CLI\nmore\n")
+            (ws / "README.md").write_text("\n# To-do CLI\nmore\n", newline="")       # 18 bytes on every OS
             (ws / "__pycache__").mkdir()
             (ws / "__pycache__" / "todo.pyc").write_bytes(b"\x00")
             text = project_map(ws)
@@ -149,7 +149,7 @@ class AcrossBuildsTests(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def set_config(self, **memory):
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["memory"].update(memory)
         (self.root / "config.json").write_text(json.dumps(config))
 
@@ -159,7 +159,7 @@ class AcrossBuildsTests(unittest.TestCase):
 
     def lessons(self):
         path = self.root / "memory" / "lessons.json"
-        return json.loads(path.read_text()) if path.exists() else []
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
     def test_fix_lesson_carries_to_next_build(self):
         # build 1: the missing-file crash is found by the check and fixed
@@ -241,7 +241,7 @@ class AcrossBuildsTests(unittest.TestCase):
         self.assertFalse((self.root / "memory").exists())
 
     def test_memory_command(self):
-        store = main.make_store(json.loads((self.root / "config.json").read_text()))
+        store = main.make_store(json.loads((self.root / "config.json").read_text(encoding="utf-8")))
         store.add("fix", "ModuleNotFoundError No module named pytest", check="python -m pytest -q",
                   error="x", fix="installed nothing; used unittest instead")
         with contextlib.redirect_stdout(io.StringIO()) as out:

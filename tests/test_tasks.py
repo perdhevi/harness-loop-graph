@@ -57,7 +57,7 @@ class TaskTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         tmp = Path(self.tmp.name)
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["build"]["task_max_iterations"] = 3
         (tmp / "config.json").write_text(json.dumps(config))
         for target, value in [("ROOT", tmp), ("CONFIG_PATH", tmp / "config.json")]:
@@ -80,7 +80,7 @@ class TaskTests(unittest.TestCase):
             return main.run_build(*a, verbose_graph=False, **{"judge": False, **kw})   # judge: see test_judge.py
 
     def plan_file(self, run_dir):
-        return json.loads((Path(run_dir) / "plan.json").read_text())
+        return json.loads((Path(run_dir) / "plan.json").read_text(encoding="utf-8"))
 
     def test_tasks_run_in_order_with_handoffs(self):
         model = FakeModel([
@@ -108,7 +108,7 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(s["steps"], 6)
         self.assertEqual(s["tool_calls"], {"workspace.write_file": 3})
         self.assertIn("T2 task T2: T2 made t2.py", s["answer"])
-        lines = [json.loads(x) for x in (Path(s["run_dir"]) / "transcript.jsonl").read_text().splitlines()]
+        lines = [json.loads(x) for x in (Path(s["run_dir"]) / "transcript.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual([x["task"] for x in lines if "n" in x], ["T1", "T1", "T2", "T2", "T3", "T3"])
         self.assertEqual(load_state(s["run_dir"]).history,
                          ["intake", "plan"] + ["next_task", "run_task", "verify"] * 3
@@ -151,13 +151,13 @@ class TaskTests(unittest.TestCase):
         # Known limit: an interrupted attempt never reports its numbers, so only the
         # resumed attempt's 2 steps are counted. The transcript still has all 3.
         self.assertEqual(self.plan_file(run_dir)["tasks"][1]["steps"], 2)
-        steps = [json.loads(x) for x in (Path(run_dir) / "transcript.jsonl").read_text().splitlines()]
+        steps = [json.loads(x) for x in (Path(run_dir) / "transcript.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual(sum(1 for x in steps if x.get("task") == "T2" and "n" in x), 3)
 
     def test_plan_edit_between_runs_is_used(self):
         s = self.build("demo", review=True, model=FakeModel([plan(t("T1"), t("T2", ["T1"]))]))
         pf = Path(s["run_dir"]) / "plan.json"
-        p = json.loads(pf.read_text())
+        p = json.loads(pf.read_text(encoding="utf-8"))
         p["tasks"][1]["title"] = "Renamed by reviewer"
         pf.write_text(json.dumps(p))
         model = FakeModel([write("t1.py"), final("T1 ok"), write("t2.py"), final("T2 ok")])

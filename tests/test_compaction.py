@@ -176,7 +176,7 @@ class LongTaskTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def build(self, enabled=True):
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["context"]["window_tokens"] = 3000
         config["build"]["task_max_iterations"] = 40
         config["compaction"]["enabled"] = enabled
@@ -222,7 +222,7 @@ class LongTaskTests(unittest.TestCase):
         text = render(events, steps=True)
         self.assertIn("compacted×", text)
         self.assertIn("compact  steps 1–", text)
-        full = [x for x in (Path(s["run_dir"]) / "transcript.jsonl").read_text().splitlines() if '"n"' in x]
+        full = [x for x in (Path(s["run_dir"]) / "transcript.jsonl").read_text(encoding="utf-8").splitlines() if '"n"' in x]
         self.assertEqual(len(full), 34)                                       # the full record is untouched
 
     def test_off_means_history_grows_past_budget(self):

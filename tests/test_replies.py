@@ -130,7 +130,7 @@ class GemmaBuildTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def build(self, normalize=True):
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["replies"]["normalize"] = normalize
         config["build"]["task_max_iterations"] = 4
         (self.root / "config.json").write_text(json.dumps(config))
@@ -151,7 +151,7 @@ class GemmaBuildTests(unittest.TestCase):
         self.assertEqual(s["status"], "finished")
         run = Path(s["run_dir"])
         self.assertEqual((run / "workspace" / "greet.py").read_text(encoding="utf-8"), "print('Hello — world ✓')\n")
-        steps = [json.loads(x) for x in (run / "transcript.jsonl").read_text().splitlines() if '"n"' in x]
+        steps = [json.loads(x) for x in (run / "transcript.jsonl").read_text(encoding="utf-8").splitlines() if '"n"' in x]
         self.assertEqual([x["action"] for x in steps[:2]], ["write_file", "run_command"])
         self.assertIn("ran as workspace.write_file", steps[0]["observation"])
         self.assertIn("Hello — world ✓", steps[1]["observation"])

@@ -43,6 +43,15 @@ class WindowsEncodingTests(unittest.TestCase):
             self.assertEqual((self.root / name).read_text(encoding="utf-8"), text)
             self.assertEqual(self.c.call_tool("read_file", {"path": name}), text)
 
+    def test_line_endings_are_kept(self):
+        self.c.call_tool("write_file", {"path": "lf.py", "content": "a = 1\nb = 2\n"})
+        self.assertEqual((self.root / "lf.py").read_bytes(), b"a = 1\nb = 2\n")         # no \r\n added on Windows
+        self.c.call_tool("edit_file", {"path": "lf.py", "old": "b = 2", "new": "b = 3"})
+        self.assertEqual((self.root / "lf.py").read_bytes(), b"a = 1\nb = 3\n")
+        (self.root / "crlf.py").write_bytes(b"a = 1\r\nb = 2\r\n")                       # a file from a Windows editor
+        self.c.call_tool("edit_file", {"path": "crlf.py", "old": "b = 2", "new": "b = 3"})
+        self.assertEqual((self.root / "crlf.py").read_bytes(), b"a = 1\r\nb = 3\r\n")
+
     def test_server_survives_bytes_cp1252_cannot_decode(self):
         self.c.call_tool("write_file", {"path": "a.md", "content": "Ё"})          # UTF-8 D0 81: 0x81 is undefined in cp1252
         self.assertIn("created b.md", self.c.call_tool("write_file", {"path": "b.md", "content": "still alive"}))
@@ -54,9 +63,11 @@ class WindowsEncodingTests(unittest.TestCase):
         self.assertIn("done ✓ — Ёлка", out)
 
     def test_exe_suffix_passes_the_allow_list(self):
-        with self.assertRaises(McpToolError) as ctx:
-            self.c.call_tool("run_command", {"command": "python.exe -c \"print(1)\""})
-        self.assertNotIn("not allowed", str(ctx.exception))                    # on Linux: "program not found"
+        try:
+            out = self.c.call_tool("run_command", {"command": "python.exe -c \"print(1)\""})   # Windows: it runs
+        except McpToolError as e:
+            out = str(e)                                                        # Linux: "program not found"
+        self.assertNotIn("not allowed", out)
 
 
 class OllamaAdapterTests(unittest.TestCase):
@@ -129,7 +140,7 @@ class ThinkNotSupportedTests(unittest.TestCase):
 
 class SettingsCheckTests(unittest.TestCase):
     def config(self, num_ctx, window):
-        c = json.loads((ROOT / "config.json").read_text())
+        c = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         c["provider"] = "ollama"
         c["providers"]["ollama"].pop("num_ctx", None)
         if num_ctx:
@@ -143,7 +154,7 @@ class SettingsCheckTests(unittest.TestCase):
         self.assertEqual(main.check_context_settings(self.config(16384, 16000), say=lambda m: None), [])
 
     def test_shipped_config_is_consistent(self):
-        c = json.loads((ROOT / "config.json").read_text())
+        c = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         self.assertGreaterEqual(c["providers"]["ollama"]["num_ctx"], c.get("context", {}).get("window_tokens", 16000))
 
 
@@ -175,7 +186,7 @@ class DoctorTests(unittest.TestCase):
         self.addCleanup(srv.shutdown)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        c = json.loads((ROOT / "config.json").read_text())
+        c = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         c["provider"] = "ollama"
         c["providers"]["ollama"]["base_url"] = f"http://127.0.0.1:{srv.server_address[1]}"
         c["providers"]["ollama"]["model"] = "qwen3:8b"      # the model the fake server has, whatever config.json says

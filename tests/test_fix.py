@@ -29,7 +29,7 @@ class FixTests(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["build"]["task_max_iterations"] = 3
         config["judge"]["max_revisions"] = 1
         (tmp / "config.json").write_text(json.dumps(config))
@@ -61,13 +61,13 @@ class FixTests(unittest.TestCase):
         self.assertEqual((s["status"], s["revisions"]), ("accepted", 1))
         self.assertIn(FEEDBACK, model.calls[0]["messages"][0]["content"])             # the reviser saw it
         self.assertEqual([(t["id"], t["status"]) for t in s["tasks"]], [("T1", "done"), ("R1-1", "done")])
-        spec = (Path(run_dir) / "SPEC.md").read_text()
+        spec = (Path(run_dir) / "SPEC.md").read_text(encoding="utf-8")
         self.assertIn("## Revision 1", spec)
         self.assertIn(f"**Why (fix requested by a person):** {FEEDBACK}", spec)
         st = load_state(run_dir)
         self.assertEqual([v.get("source", "judge") for v in st.verdicts], ["judge", "human", "judge"])
         self.assertIn("revise", st.history[st.history.index("finish") + 1:])
-        self.assertIn("has a README", (Path(run_dir) / "REPORT.md").read_text())
+        self.assertIn("has a README", (Path(run_dir) / "REPORT.md").read_text(encoding="utf-8"))
 
     def test_judge_gets_its_own_budget_after_a_fix(self):
         # max_revisions is 1: without its own budget, the judge's revise below would be escalated at once

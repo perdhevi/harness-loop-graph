@@ -305,7 +305,7 @@ class DropFlowTests(unittest.TestCase):
         import main
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["build"]["task_max_iterations"] = 2
         (tmp / "config.json").write_text(json.dumps(config))
 

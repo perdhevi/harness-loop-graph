@@ -45,23 +45,23 @@ class ApplyTests(unittest.TestCase):
     def test_apply_then_undo(self):
         p = apply_run(self.run)
         self.assertEqual((p["changed"], p["added"], p["deleted"]), (["edit.py"], ["pkg/new.py"], ["gone.py"]))
-        self.assertEqual((self.source / "edit.py").read_text(), "new\n")
-        self.assertEqual((self.source / "pkg" / "new.py").read_text(), "added\n")
+        self.assertEqual((self.source / "edit.py").read_text(encoding="utf-8"), "new\n")
+        self.assertEqual((self.source / "pkg" / "new.py").read_text(encoding="utf-8"), "added\n")
         self.assertFalse((self.source / "gone.py").exists())
-        self.assertEqual((self.source / "my_notes.txt").read_text(), "mine")
-        self.assertEqual((self.run / "backup" / "edit.py").read_text(), "old\n")
-        applied = json.loads((self.run / "summary.json").read_text())["applied"]
+        self.assertEqual((self.source / "my_notes.txt").read_text(encoding="utf-8"), "mine")
+        self.assertEqual((self.run / "backup" / "edit.py").read_text(encoding="utf-8"), "old\n")
+        applied = json.loads((self.run / "summary.json").read_text(encoding="utf-8"))["applied"]
         self.assertEqual(applied["changed"], ["edit.py"])
         with self.assertRaisesRegex(ApplyError, "already applied"):
             apply_run(self.run)
 
         undo_apply(self.run)
-        self.assertEqual((self.source / "edit.py").read_text(), "old\n")
-        self.assertEqual((self.source / "gone.py").read_text(), "bye\n")
+        self.assertEqual((self.source / "edit.py").read_text(encoding="utf-8"), "old\n")
+        self.assertEqual((self.source / "gone.py").read_text(encoding="utf-8"), "bye\n")
         self.assertFalse((self.source / "pkg" / "new.py").exists())
-        self.assertEqual((self.source / "my_notes.txt").read_text(), "mine")
+        self.assertEqual((self.source / "my_notes.txt").read_text(encoding="utf-8"), "mine")
         apply_run(self.run)                                                # can be applied again after undo
-        self.assertEqual((self.source / "edit.py").read_text(), "new\n")
+        self.assertEqual((self.source / "edit.py").read_text(encoding="utf-8"), "new\n")
 
     def test_conflicts_write_nothing(self):
         (self.source / "edit.py").write_text("I edited this meanwhile\n")
@@ -83,13 +83,13 @@ class ApplyTests(unittest.TestCase):
     def test_dry_run_and_undo_conflict(self):
         p = apply_run(self.run, dry_run=True)
         self.assertEqual(p["changed"], ["edit.py"])
-        self.assertEqual((self.source / "edit.py").read_text(), "old\n")   # dry run: nothing written
+        self.assertEqual((self.source / "edit.py").read_text(encoding="utf-8"), "old\n")   # dry run: nothing written
         apply_run(self.run)
         (self.source / "edit.py").write_text("edited after apply\n")
         with self.assertRaisesRegex(ApplyError, "edit.py: changed in your folder after apply"):
             undo_apply(self.run)
         undo_apply(self.run, force=True)
-        self.assertEqual((self.source / "edit.py").read_text(), "old\n")
+        self.assertEqual((self.source / "edit.py").read_text(encoding="utf-8"), "old\n")
 
     def test_runs_without_a_source_are_refused(self):
         run = self.tmp / "runs" / "built"
@@ -123,7 +123,7 @@ class ReviewApplyFlagTests(Harness):
         code, out = self.review("--apply", replies=[
             findings(F1), PLAN, act("edit_file", path="stats.py", old=BUG, new=FIXED), j(thought="d", final="ok"), ACCEPT])
         self.assertEqual(code, 0, out)
-        self.assertIn(FIXED, (self.project / "stats.py").read_text())
+        self.assertIn(FIXED, (self.project / "stats.py").read_text(encoding="utf-8"))
         self.assertIn("apply    : applied 1 file(s)", out)
         self.assertIn("   M stats.py", out)
 
@@ -132,4 +132,4 @@ class ReviewApplyFlagTests(Harness):
             findings(F1), PLAN, act("edit_file", path="stats.py", old=BUG, new=FIXED), j(thought="d", final="ok"),
             "not json", "still not json"])                                  # the judge fails → escalated
         self.assertIn("apply    : skipped, the run ended 'escalated'", out)
-        self.assertIn(BUG, (self.project / "stats.py").read_text())
+        self.assertIn(BUG, (self.project / "stats.py").read_text(encoding="utf-8"))

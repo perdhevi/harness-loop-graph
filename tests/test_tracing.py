@@ -63,7 +63,7 @@ class TracingFlowTests(unittest.TestCase):
     def build(self, *a, trace=True, **kw):
         tmp = Path(self.tmp.name) / ("on" if trace else "off")
         tmp.mkdir(exist_ok=True)
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["trace"]["enabled"] = trace
         (tmp / "config.json").write_text(json.dumps(config))
         with mock.patch.object(main, "ROOT", tmp), mock.patch.object(main, "CONFIG_PATH", tmp / "config.json"), \
@@ -117,7 +117,7 @@ class TracingFlowTests(unittest.TestCase):
         self.assertEqual(clean(on), clean(off))
 
         def plan_without_timing(run_dir):
-            p = json.loads((Path(run_dir) / "plan.json").read_text())
+            p = json.loads((Path(run_dir) / "plan.json").read_text(encoding="utf-8"))
             for t in p["tasks"]:
                 t.pop("duration_s", None)
             return p

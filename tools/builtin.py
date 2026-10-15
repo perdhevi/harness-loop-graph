@@ -3,7 +3,7 @@
 import ast
 import operator
 from datetime import datetime, timezone as _tz
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 _OPS = {
     ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -33,5 +33,11 @@ def calculate(expression: str) -> str:
 
 def current_time(timezone: str = "UTC") -> str:
     """Current date and time in ISO 8601 for an IANA timezone."""
-    tz = _tz.utc if timezone.upper() == "UTC" else ZoneInfo(timezone)
+    try:
+        tz = _tz.utc if timezone.upper() == "UTC" else ZoneInfo(timezone)
+    except ZoneInfoNotFoundError:
+        if not available_timezones():                                   # Windows without the tzdata package
+            raise ValueError(f"no time zone data on this machine for '{timezone}' "
+                             "(install it with: pip install tzdata); use 'UTC' meanwhile") from None
+        raise ValueError(f"unknown time zone '{timezone}'; use an IANA name like 'Europe/Paris' or 'UTC'") from None
     return datetime.now(tz).isoformat(timespec="seconds")

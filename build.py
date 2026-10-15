@@ -88,7 +88,7 @@ class CountingModel:
 
 def list_files(root: Path) -> list[dict]:
     files = []
-    for p in sorted(root.rglob("*")):
+    for p in sorted(root.rglob("*"), key=lambda p: p.as_posix()):      # same order on every OS (WindowsPath sorts case-insensitively)
         rel = p.relative_to(root)
         if any(part in SKIP_DIRS for part in rel.parts) or not p.is_file():
             continue

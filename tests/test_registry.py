@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from zoneinfo import available_timezones
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -82,7 +83,11 @@ class RegistryTests(unittest.TestCase):
 
     def test_call_local(self):
         self.assertEqual(self.reg.call("calculate", {"expression": "2 + 3"}), "5")
-        self.assertRegex(self.reg.call("current_time", {"timezone": "Asia/Jakarta"}), r"\+07:00$")
+        jakarta = self.reg.call("current_time", {"timezone": "Asia/Jakarta"})
+        if available_timezones():
+            self.assertRegex(jakarta, r"\+07:00$")
+        else:                                                                    # Windows without tzdata
+            self.assertIn("pip install tzdata", jakarta)
         self.assertRegex(self.reg.call("current_time", {}), r"\+00:00$")
 
     def test_errors_are_observations(self):

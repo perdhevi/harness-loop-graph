@@ -141,7 +141,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(st.history, ["intake", "plan", "next_task", "run_task", "verify",
                                       "next_task", "final_check", "finish"])
         self.assertEqual(st.plan["title"], "Greeter")
-        self.assertEqual(json.loads((Path(s["run_dir"]) / "summary.json").read_text())["status"], "finished")
+        self.assertEqual(json.loads((Path(s["run_dir"]) / "summary.json").read_text(encoding="utf-8"))["status"], "finished")
 
     def test_crash_while_planning_then_resume(self):
         with self.assertRaises(RunStopped) as ctx:
@@ -163,7 +163,7 @@ class PipelineTests(unittest.TestCase):
         run_dir = self.only_run()
         st = load_state(run_dir)
         self.assertEqual((st.next, st.status, st.current_task), ("run_task", "interrupted", "T1"))
-        plan = json.loads((run_dir / "plan.json").read_text())
+        plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
         self.assertEqual(plan["tasks"][0]["status"], "in_progress")
 
         model = FakeModel([write("app.py"), final()])
@@ -172,7 +172,7 @@ class PipelineTests(unittest.TestCase):
         first = model.calls[0][0]["content"]
         self.assertIn("being resumed", first)
         self.assertIn("- half.py (6 bytes)", first)
-        events = [json.loads(line) for line in (run_dir / "transcript.jsonl").read_text().splitlines()]
+        events = [json.loads(line) for line in (run_dir / "transcript.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertTrue(any(e.get("event") == "resume" for e in events))
         self.assertEqual(sorted(f["path"] for f in s["files"]), ["app.py", "half.py"])
 

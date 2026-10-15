@@ -142,7 +142,7 @@ class BuildTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def build(self, replies, sensors=True, judge=False, **cfg):
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["build"]["task_max_iterations"] = cfg.get("max_steps", 12)
         config["sensors"]["enabled"] = sensors
         (self.root / f"config-{sensors}.json").write_text(json.dumps(config))
@@ -169,7 +169,7 @@ class BuildTests(unittest.TestCase):
         self.assertLess(warn_at, out.index("[task] T1 → failed"))           # …but was flagged first
         warning_line = out[warn_at:].splitlines()[0]
         self.assertIn("same failure ×", warning_line)
-        plan = json.loads((Path(s["run_dir"]) / "plan.json").read_text())
+        plan = json.loads((Path(s["run_dir"]) / "plan.json").read_text(encoding="utf-8"))
         self.assertGreaterEqual(plan["tasks"][0]["signals"]["peak_stuck"], 0.5)
         self.assertGreaterEqual(s["tasks"][0]["stuck"], 0.5)
         from trace_view import load_events
@@ -206,7 +206,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(on["status"], off["status"])
         self.assertIn("[sensor]", out_on)
         self.assertNotIn("[sensor]", out_off)
-        plan_off = json.loads((Path(off["run_dir"]) / "plan.json").read_text())
+        plan_off = json.loads((Path(off["run_dir"]) / "plan.json").read_text(encoding="utf-8"))
         self.assertNotIn("signals", plan_off["tasks"][0])
 
 

@@ -91,7 +91,7 @@ class Workspace:
             raise ToolError(f"'{path}' is a directory")
         p.parent.mkdir(parents=True, exist_ok=True)
         existed = p.exists()
-        p.write_text(content, encoding="utf-8")
+        p.write_text(content, encoding="utf-8", newline="")          # write exactly what was sent: no \r\n on Windows
         return f"{'overwrote' if existed else 'created'} {self._rel(p)} ({len(content.encode('utf-8'))} bytes)"
 
     def edit_file(self, path: str, old: str, new: str) -> str:
@@ -106,7 +106,8 @@ class Workspace:
             raise ToolError(f"'old' text not found in {path}.{_closest(text, old)}")
         if count > 1:
             raise ToolError(f"'old' text appears {count} times in {path}; include more context so it is unique")
-        p.write_text(text.replace(old, new, 1), encoding="utf-8")
+        crlf = b"\r\n" in p.read_bytes()                              # keep the file's own line endings
+        p.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\r\n" if crlf else "")
         return f"edited {self._rel(p)}"
 
     def list_dir(self, path: str = ".", recursive: bool = False) -> str:

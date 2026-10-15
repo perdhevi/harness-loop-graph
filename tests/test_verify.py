@@ -103,7 +103,7 @@ class VerifyFlowTests(unittest.TestCase):
             return main.run_build(*a, verbose_graph=False, **{"judge": False, **kw})   # judge: see test_judge.py
 
     def plan_of(self, s):
-        return {t["id"]: t for t in json.loads((Path(s["run_dir"]) / "plan.json").read_text())["tasks"]}
+        return {t["id"]: t for t in json.loads((Path(s["run_dir"]) / "plan.json").read_text(encoding="utf-8"))["tasks"]}
 
     def test_false_claim_is_caught_and_fixed(self):
         """The Stage 05 lesson: the model says tests pass; the harness finds out they don't."""
@@ -162,7 +162,7 @@ class VerifyFlowTests(unittest.TestCase):
         # Chapter I: the planner now rejects `ls` up front, so put it in by hand, as a reviewer could
         planned = self.build("x", review=True, model=FakeModel([plan(task("T1", {"file": "a.txt"}))]))
         plan_file = Path(planned["run_dir"]) / "plan.json"
-        edited = json.loads(plan_file.read_text())
+        edited = json.loads(plan_file.read_text(encoding="utf-8"))
         edited["tasks"][0]["done_when"] = {"command": "ls"}
         plan_file.write_text(json.dumps(edited))
         s = self.build(None, from_run=planned["run_dir"], model=FakeModel([final("a"), final("b"), final("c")]))

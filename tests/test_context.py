@@ -105,7 +105,7 @@ class OutputLimiterTests(unittest.TestCase):
         self.assertLessEqual(len(seen), 1000 + 200)
         self.assertTrue(seen.startswith("START") and seen.endswith("END"))
         self.assertIn("[output 0001 cut:", seen)
-        self.assertEqual((self.out / "0001.txt").read_text(), text)
+        self.assertEqual((self.out / "0001.txt").read_text(encoding="utf-8"), text)
         part = self.lim.call("harness.read_output", {"id": "0001", "offset": 5, "limit": 50})
         self.assertIn("chars 5–55", part)
         self.assertIn("line 0", part)
@@ -168,7 +168,7 @@ class BuildTests(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def configure(self, **context):
-        config = json.loads((ROOT / "config.json").read_text())
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         config["context"].update({"window_tokens": 4000, **context})    # 0.4 × 4000 × 4 = 6400 chars
         config["build"]["task_max_iterations"] = 40                       # T1 writes 25 files
         (self.root / "config.json").write_text(json.dumps(config))
@@ -217,12 +217,12 @@ class BuildTests(unittest.TestCase):
                            final()])
         s = self.build("noisy", model=model)
         run_dir = Path(s["run_dir"])
-        steps = [json.loads(x) for x in (run_dir / "transcript.jsonl").read_text().splitlines() if '"n"' in x]
+        steps = [json.loads(x) for x in (run_dir / "transcript.jsonl").read_text(encoding="utf-8").splitlines() if '"n"' in x]
         cut = steps[1]["observation"]
         self.assertLessEqual(len(cut), 4000 + 200)
         self.assertIn("[output 0001 cut:", cut)
         self.assertIn("THE END", cut)                                    # the tail survives
-        self.assertIn("row 2999", (run_dir / "outputs" / "0001.txt").read_text())
+        self.assertIn("row 2999", (run_dir / "outputs" / "0001.txt").read_text(encoding="utf-8"))
         self.assertIn("[output 0001: chars 2000–2300", steps[2]["observation"])
 
     def test_fix_prompt_keeps_the_end_of_long_failures(self):
@@ -243,7 +243,7 @@ class BuildTests(unittest.TestCase):
                                content="for i in range(3000):\n    print('row', i)\n"),
                            act("workspace.run_command", command="python noisy.py"), final()])
         s = self.build("noisy", model=model)
-        steps = [json.loads(x) for x in (Path(s["run_dir"]) / "transcript.jsonl").read_text().splitlines()
+        steps = [json.loads(x) for x in (Path(s["run_dir"]) / "transcript.jsonl").read_text(encoding="utf-8").splitlines()
                  if '"n"' in x]
         self.assertNotIn("[output", steps[1]["observation"])
         self.assertNotIn("RELEVANT FILES", model.calls[1]["messages"][0]["content"])
