@@ -2,7 +2,7 @@
 
 **Part 2 · Reference chapter** · **Status:** ✅ done (tested against a fake server and the official MCP Python SDK server — confirm with the service you use)
 
-[← Chapter J: Reviewing and fixing existing code](../../chapters/J-review-existing/README.md) · [Index](../../README.md)
+[← Chapter J: Reviewing and fixing existing code](../../chapters/J-review-existing/README.md) · [Index](../../README.md) · [Chapter L: A local web UI →](../../chapters/L-web-ui/README.md)
 
 ## Read this when
 
@@ -90,4 +90,4 @@ chapter K: remote MCP servers over Streamable HTTP — shared session, HTTP clie
 
 ---
 
-[← Chapter J: Reviewing and fixing existing code](../../chapters/J-review-existing/README.md) · [Index](../../README.md)
+[← Chapter J: Reviewing and fixing existing code](../../chapters/J-review-existing/README.md) · [Index](../../README.md) · [Chapter L: A local web UI →](../../chapters/L-web-ui/README.md)

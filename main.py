@@ -20,6 +20,7 @@ Usage:
     python main.py build --max-iterations 60 "..."
     python main.py trace runs/<id> [--steps]       # read a build's trace (Chapter A)
     python main.py memory [--query "..."]          # lessons from past builds (Chapter B)
+    python main.py gui [--port 8765]               # the local web UI (Chapter L)
     python main.py runs [--last 20]                # every finished run, from runs/index.jsonl (Chapter F)
     python main.py doctor                          # check settings, workspace server, model and reply format
     python main.py bench benchmarks/core.json [--label L] [--provider P --model M] [--save-baseline]
@@ -143,13 +144,16 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
               ask=None, review: bool = False, from_run: str | None = None, no_plan: bool = False,
               judge: bool | None = None, verbose_graph: bool = True, config: dict | None = None,
               tags: dict | None = None, quiet: bool = False, fix: str | None = None,
-              source: str | None = None, only_review: bool = False, test_command: str | None = None) -> dict:
+              source: str | None = None, only_review: bool = False, test_command: str | None = None,
+              say=None, on_step=None, on_enter=None) -> dict:
     """Plan and build through the graph. `from_run` resumes a paused or stopped run.
 
     `config` overrides config.json (Chapter F: benchmarks pick provider/model); `tags` go to the run index.
+    `say`, `on_step` and `on_enter` replace the terminal output (Chapter L: the web UI); `quiet` drops it.
     """
     config = config or load_json(CONFIG_PATH)
-    check_context_settings(config, say=(lambda m: None) if quiet else print)
+    say = (lambda m: None) if quiet else (say or print)
+    check_context_settings(config, say=say)
     prompts = load_json(PROMPTS_PATH)
     models = make_role_models(config, override=model)
     task_provider, task_settings = role_settings(config, "task")
@@ -160,13 +164,14 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
         prompts={k: prompt_text(prompts, k) for k in prompts},
         runs_dir=ROOT / config.get("build", {}).get("runs_dir", "runs"),
         ask=ask,
-        on_step=None if quiet else print_step,
-        say=(lambda msg: None) if quiet else print,
+        on_step=None if quiet else (on_step or print_step),
+        say=say,
         meta={"provider": task_provider, "model": task_settings.get("model"), "roles": describe_roles(config)},
         tracer=Tracer() if config.get("trace", {}).get("enabled", True) else NullTracer(),
         memory=make_store(config),
     )
-    on_enter = (lambda name, state: print(f"[graph] → {name}")) if verbose_graph else None
+    if on_enter is None and verbose_graph:
+        on_enter = lambda name, state: print(f"[graph] → {name}")  # noqa: E731
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
                         max_iterations=max_iterations, judge=judge, tags=tags, fix=fix,
                         source=source, only_review=only_review, test_command=test_command,
@@ -643,6 +648,9 @@ def main(argv: list[str] | None = None) -> int:
         return main_runs(argv[1:])
     if argv[:1] == ["bench"]:
         return main_bench(argv[1:])
+    if argv[:1] == ["gui"]:
+        from gui import main_gui
+        return main_gui(argv[1:])
 
     parser = argparse.ArgumentParser(description="harness-loop-graph",
                                      epilog="For projects, use: main.py build \"<request>\"")

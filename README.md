@@ -92,8 +92,9 @@ Read and build these when their symptom appears. Order is a suggestion, apart fr
 | I | [Robust replies and plans](chapters/I-robust-replies/README.md) | Runs fail on the model's format: parse errors, revisions that escalate, tasks that keep saying "done" until they run out of steps. | Stages 02, 04, 06, 10 | ✅ done |
 | J | [Reviewing and fixing existing code](chapters/J-review-existing/README.md) | You have a project the harness didn't build and want it reviewed or fixed, with changes handed back as a patch. | Stage 10 (judge) | ✅ done |
 | K | [Remote MCP servers](chapters/K-remote-mcp/README.md) | A tool you want is on a remote MCP service (a URL), not a local program. | Stage 04 (MCP) | ✅ done |
+| L | [A local web UI](chapters/L-web-ui/README.md) | You'd rather start, watch and review runs in a browser: live steps, the planner's questions, documents, the patch, apply. | Stage 07 (graph & state), Chapters A and J | ✅ done |
 
-Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands. Chapter G adds `build --fix`. Chapter H lets each role (planner, task, judge, reviser, compactor) use its own model; without a `roles` setting, one model does everything. Chapter I makes replies and plans from small models far more robust.
+Part 2 is complete: every chapter is built and tested. Chapters A–E change how a build runs; they are on by default and each can be switched off in `config.json`. Chapter F adds the `runs` and `bench` commands. Chapter G adds `build --fix`. Chapter H lets each role (planner, task, judge, reviser, compactor) use its own model; without a `roles` setting, one model does everything. Chapter I makes replies and plans from small models far more robust. Chapter L adds `python main.py gui`, a browser front end for the same runs.
 
 **Fixed dependencies inside Part 2:** C (context management) before D (compaction). A (tracing) is worth reading as soon as Stage 02 is done.
 

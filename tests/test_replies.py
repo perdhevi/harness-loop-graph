@@ -77,6 +77,44 @@ class NormalizeTests(unittest.TestCase):
         a, _ = self.action('{"final_answer": "all done"}')
         self.assertEqual(a["final"], "all done")
 
+    def test_missing_closing_braces(self):
+        # found with qwen3.5:9b: a complete write_file call, one "}" short (and a repeated "path")
+        content = 'def main():\n    print("Please enter letters only.")\n    return {"a": [1]}\n'
+        text = ('{"thought": "write it", "action": "workspace.write_file", "args": {"path": "hangman.py", '
+                f'"content": {json.dumps(content)}, "path": "hangman.py"}}')
+        with self.assertRaises(Exception):                   # what the loop saw before
+            parse_action(text)
+        a, how = self.action(text)
+        self.assertEqual(how, "closed-braces")
+        self.assertEqual((a["action"], a["args"]), ("workspace.write_file", {"path": "hangman.py", "content": content}))
+        a, how = self.action('{"thought": "t", "final": {"summary": "done", "files": ["a.py"]')
+        self.assertEqual((json.loads(a["final"]), how), ({"summary": "done", "files": ["a.py"]}, "closed-braces"))
+
+    def test_unquoted_thought_key(self):
+        # found with qwen3.5:9b: {thought}: … instead of {"thought": "…
+        text = ('{thought}: I need to read hangman.py first, to see its "exact" state.", '
+                '"action": "workspace.read_file", "args": {"path": "hangman.py"}}')
+        a, how = self.action(text.replace('"exact"', 'exact'))
+        self.assertEqual(how, "thought-key")
+        self.assertEqual((a["action"], a["args"]), ("workspace.read_file", {"path": "hangman.py"}))
+        self.assertEqual(a["thought"], "I need to read hangman.py first, to see its exact state.")
+        a, how = self.action('{thought}: all done.", "final": "built hangman.py"')       # and a missing "}"
+        self.assertEqual((a["final"], how), ("built hangman.py", "thought-key+closed-braces"))
+        for bad in [text,                                                   # a stray quote inside: not guessed
+                    '{thought}: done.", "action": null, "args": {}}']:      # no action to recover
+            with self.subTest(text=bad):
+                self.assertEqual(normalize_reply(bad), (bad, None))
+
+    def test_unclosed_json_is_not_guessed(self):
+        for text in [
+            '{"thought": "t", "action": "workspace.write_file", "args": {"path": "a", "content": "cut off he',  # open string
+            '{"thought": "t", "action": "workspace.write_file", "args": {"path": "a"} and then some prose',
+            '{"thought": "t", "action": "x", "args": {"a": {"b": {"c": {"d": 1',                              # too many
+            '{"thought": "t", "args": {"path": "a"}',                                                          # no action
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(normalize_reply(text), (text, None))
+
     def test_left_alone(self):
         canonical = '{"thought": "t", "action": "workspace.write_file", "args": {"path": "a", "content": "b"}}'
         self.assertEqual(normalize_reply(canonical), (canonical, None))

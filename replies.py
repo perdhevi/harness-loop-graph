@@ -15,6 +15,8 @@ Recognised:
               {"tool_calls": [ … ]}                                        (first call)
               {"final_answer"|"answer": …}                                 → final
               {"action": "final"|"finish"|"answer"|…, "args": {"final": …}}  → final   (Chapter I)
+  Unclosed    a canonical action or final whose last "}" / "]" are missing (Qwen 3.5), closed
+  {thought}:  a canonical reply that opens with {thought}: … instead of {"thought": "… (Qwen 3.5)
 Anything else is passed through unchanged, so the loop's own error handling still applies.
 """
 
@@ -32,6 +34,8 @@ FINAL_ACTIONS = {"final", "finish", "final_answer", "answer", "done"}
 FINAL_ARG_KEYS = ("final", "answer", "final_answer", "text", "message", "result", "response", "summary", "content")
 NAME_KEYS = ("action", "tool", "tool_name", "name", "function", "function_name")
 ARG_KEYS = ("args", "arguments", "parameters", "input", "params", "tool_input")
+MAX_MISSING_CLOSERS = 2
+_THOUGHT_KEY = re.compile(r'^\s*\{\s*thought\s*\}\s*:\s*"?')
 
 
 class _Parse(ValueError):
@@ -221,11 +225,61 @@ def _call(thought, name: str, args) -> dict | None:
     return {"thought": str(thought or ""), "action": name, "args": args}
 
 
+# ---------------------------------------------------------------- unclosed JSON
+
+def _close_brackets(text: str) -> dict | None:
+    """A JSON object that ends with every string closed but its last few "}" / "]" missing, closed.
+
+    Only that: a string still open (a reply that was cut off) or anything after the JSON means it
+    isn't this mistake, and the reply is left for the loop's own error message.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+    stack, in_str, esc = [], False, False
+    for ch in text[start:]:
+        if in_str:
+            esc, in_str = (False, True) if esc else (ch == "\\", ch != '"')
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if not stack or stack.pop() != ch:
+                return None
+            if not stack:
+                return None                                  # the object closed: not this mistake
+    if in_str or not stack or len(stack) > MAX_MISSING_CLOSERS:
+        return None
+    try:
+        obj, end = _DECODER.raw_decode(text.rstrip() + "".join(reversed(stack)), start)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if isinstance(obj.get("action"), str) and isinstance(obj.get("args", {}), dict) or "final" in obj:
+        return obj
+    return None
+
+
+def _canonical(text: str) -> tuple[dict, str] | None:
+    """The first canonical action or final in `text`, as is or with its last brackets closed."""
+    for obj in _json_objects(text):
+        if isinstance(obj.get("action"), str) and isinstance(obj.get("args", {}), dict) or "final" in obj:
+            return obj, ""
+    closed = _close_brackets(text)
+    return (closed, "+closed-braces") if closed is not None else None
+
+
 # ---------------------------------------------------------------- entry points
 
 def normalize_reply(text: str) -> tuple[str, str | None]:
     """Return (reply for the loop, name of the conversion or None if unchanged)."""
     cleaned = _THINK_RE.sub("", text or "")
+    if _THOUGHT_KEY.match(cleaned):
+        found = _canonical(_THOUGHT_KEY.sub('{"thought": "', cleaned, count=1))
+        if found:
+            return _finish(found[0], "thought-key" + found[1])
     for obj in _json_objects(cleaned):
         final = _final_action(obj)
         if final is not None:
@@ -236,6 +290,9 @@ def normalize_reply(text: str) -> tuple[str, str | None]:
         if converted:
             return _finish(converted, "json-alias")
         break
+    closed = _close_brackets(cleaned)
+    if closed is not None:
+        return _finish(closed, "closed-braces")
     q = _qwen_xml(cleaned)
     if q:
         return _finish(q, "qwen-xml")

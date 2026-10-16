@@ -31,11 +31,12 @@ A real run on a to-do CLI:
 | R9-5's check `echo 'README.md updated …'` → *no exit code* | `echo` isn't a program checks can run (and would test nothing) | A check must start with a program the workspace server allows (`mcp.json` `--allow`); the planner or reviser is told which |
 | 24 tasks, run never accepted: R6-1 failed and its chain stayed blocked while R9-x rebuilt the same work | No way to say "R9-1 replaces R6-1", and a failed or blocked task makes the judge's rule turn every accept into revise | Revisions can `"drop"` failed, blocked or pending tasks; unfinished tasks that depend on them are dropped too. Dropped tasks don't block acceptance and don't count toward the task limit; the summary shows `~ … (dropped in round N)`; a warning appears near the limit |
 | Rounds 1–5 on one failing test | The plan kept tasks in memory while `add` and `list` run as separate processes | Planner and reviser rule: state that must survive between commands goes to a file |
+| Qwen 3.5 (9B), hangman CLI: `JSON object has neither 'action' nor 'final'` 25 times, the same `write_file` retried | Complete replies one `}` short, so the parser found only the inner `args`; and replies opening `{thought}: …` instead of `{"thought": "…` | A canonical action or final missing its last one or two `}`/`]` is closed (`closed-braces`); a `{thought}:` opening is rewritten (`thought-key`). Only when every string is closed, nothing follows, and the result is a valid action or final; replay of that run: 23 of 27 failed replies recovered |
 
 ## What gets built
 
 - `loop.py` — the parser accepts real line breaks inside strings, picks the first object with the expected keys, falls back to Python-style dicts, and reports *where* JSON broke (or that the reply was cut off). The planner, reviser and judge use it too.
-- `replies.py` — `final-action`: `{"action": "final", …}` → a final answer
+- `replies.py` — `final-action`: `{"action": "final", …}` → a final answer; `closed-braces` and `thought-key` repair the two Qwen 3.5 slips above
 - `tools/registry.py` — calling `final`, `finish` or `answer` as a tool returns how to finish
 - `servers/workspace_server.py` — `edit_file` "not found" shows the closest lines
 - `planner.py` — `command_problems()` (shell operators, programs outside the allow list), `drop` in revisions, keyless `done_when` repair, clearer `done_when` errors, `retry` clean-up, copied-check rule, the reviser's own retry prompt

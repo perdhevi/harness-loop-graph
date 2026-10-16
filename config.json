@@ -4,7 +4,7 @@
   "providers": {
     "ollama": {
       "base_url": "http://localhost:11434",
-      "model": "qwen3.8:latest",
+      "model": "qwen3.5:9b",
       "timeout_s": 9000,
       "num_ctx": 16384,
       "think": false

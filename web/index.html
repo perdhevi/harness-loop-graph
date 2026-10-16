@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness Runs</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --panel-2: #f0efec; --line: #e2e0db; --text: #1d1d1b; --muted: #6b6a66;
+  --accent: #3b5bdb; --accent-text: #ffffff; --ok: #2b8a3e; --warn: #b26b00; --bad: #c92a2a; --info: #1971c2;
+  --ok-bg: #ebfbee; --warn-bg: #fff4e0; --bad-bg: #fff0f0; --info-bg: #e7f1fd;
+  --add: #e6f6ea; --del: #fdecec; --hunk: #e9f0fc;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413; --panel: #1d1d1b; --panel-2: #262624; --line: #34332f; --text: #ecebe7; --muted: #9c9a94;
+    --accent: #7c95f5; --accent-text: #10121a; --ok: #69db7c; --warn: #ffc078; --bad: #ff8787; --info: #74c0fc;
+    --ok-bg: #1b2b1e; --warn-bg: #2e2416; --bad-bg: #321c1c; --info-bg: #17263a;
+    --add: #183020; --del: #3a1d1d; --hunk: #1b2740;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); }
+button, input, textarea, select { font: inherit; color: inherit; }
+header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+.roles { color: var(--muted); font-size: 12.5px; display: flex; gap: 10px; flex-wrap: wrap; }
+.roles b { color: var(--text); font-weight: 550; }
+.spacer { flex: 1; }
+.layout { display: grid; grid-template-columns: 300px 1fr; height: calc(100% - 49px); }
+aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+aside .top { padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+aside input[type=search] { width: 100%; }
+#runs { overflow: auto; flex: 1; }
+.run-item { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; gap: 3px; }
+.run-item:hover { background: var(--panel-2); }
+.run-item.sel { background: var(--info-bg); }
+.run-item .req { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-item .meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+main { overflow: auto; padding: 20px 24px 40px; min-width: 0; }
+.wrap { max-width: 1000px; margin: 0 auto; display: grid; gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; overflow-wrap: anywhere; }
+th, td { overflow-wrap: normal; } th { white-space: nowrap; }
+td code { white-space: pre-wrap; word-break: break-word; }
+h2 { font-size: 18px; margin: 0 0 4px; }
+h3 { font-size: 14px; margin: 0 0 8px; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+label { display: grid; gap: 4px; font-weight: 550; font-size: 13px; }
+label.check { display: flex; gap: 6px; align-items: center; font-weight: 400; }
+input[type=text], input[type=number], input[type=search], textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; min-width: 0; }
+textarea { width: 100%; min-height: 84px; resize: vertical; }
+input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+button:hover:not(:disabled) { background: var(--panel-2); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+button.danger { color: var(--bad); border-color: var(--bad); }
+button:disabled { opacity: .5; cursor: default; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 12px; flex-wrap: wrap; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 7px 12px; color: var(--muted); }
+.tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--panel-2); color: var(--muted); white-space: nowrap; }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.pill.info { background: var(--info-bg); color: var(--info); }
+.msg { padding: 9px 12px; border-radius: 8px; background: var(--info-bg); color: var(--info); }
+.msg.bad { background: var(--bad-bg); color: var(--bad); }
+.msg.ok { background: var(--ok-bg); color: var(--ok); }
+pre, code { font-family: var(--mono); font-size: 12.5px; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+pre.box { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; max-height: 70vh; overflow: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 550; font-size: 12.5px; }
+.feed { display: grid; gap: 6px; max-height: 62vh; overflow: auto; padding-right: 4px; }
+.ev { border-left: 3px solid var(--line); padding: 4px 10px; }
+.ev.node { border-color: var(--accent); color: var(--muted); font-size: 12.5px; }
+.ev.say { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+.ev.step { border-color: var(--info); background: var(--panel-2); border-radius: 0 6px 6px 0; }
+.ev.step.err { border-color: var(--bad); }
+.ev.step.fin { border-color: var(--ok); }
+.ev .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.ev .act { font-family: var(--mono); font-weight: 600; }
+.ev details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.diff .l { display: block; padding: 0 6px; }
+.diff .add { background: var(--add); }
+.diff .del { background: var(--del); }
+.diff .hunk { background: var(--hunk); color: var(--info); }
+.diff .file { font-weight: 700; }
+.doc h1, .doc h2, .doc h3, .doc h4 { margin: 16px 0 6px; }
+.doc h1 { font-size: 20px; } .doc h2 { font-size: 17px; } .doc h3, .doc h4 { font-size: 15px; }
+.doc p { margin: 6px 0; } .doc ul { margin: 6px 0; padding-left: 22px; }
+.doc code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
+.doc pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 8px 0; }
+.questions { display: grid; gap: 10px; }
+.hide { display: none !important; }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; height: auto; }
+  aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  main { padding: 16px; }
+  .grid2 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>harness-loop-graph</h1>
+  <div class="roles" id="roles"></div>
+  <div class="spacer"></div>
+  <span id="jobPill" class="pill hide"></span>
+</header>
+<div class="layout">
+  <aside>
+    <div class="top">
+      <button class="primary" id="newBtn">New run</button>
+      <button id="liveBtn" class="hide">Show live run</button>
+      <input type="search" id="filter" placeholder="Filter runs" aria-label="Filter runs">
+    </div>
+    <div id="runs" role="list"></div>
+  </aside>
+  <main>
+    <div class="wrap">
+      <div id="flash"></div>
+
+      <!-- new run -->
+      <section id="vNew" class="card">
+        <h2>New run</h2>
+        <p class="muted small" style="margin:0 0 12px">Runs here are ordinary run folders: <code>main.py trace</code>, <code>build --resume</code> and <code>apply</code> work on them too.</p>
+        <div class="tabs" id="kindTabs">
+          <button data-kind="build" class="on">Build</button>
+          <button data-kind="plan">Plan only</button>
+          <button data-kind="review">Review a folder</button>
+        </div>
+        <form id="newForm" style="display:grid;gap:12px">
+          <label id="pathRow" class="hide">Project folder (copied; the original is not changed)
+            <input type="text" id="fPath" placeholder="C:\path\to\project" autocomplete="off">
+          </label>
+          <label><span id="reqLabel">What should it build?</span>
+            <textarea id="fReq" placeholder="A Python CLI to-do app with add/list/done and pytest tests"></textarea>
+          </label>
+          <div class="grid2">
+            <label id="testRow" class="hide">Test command (default: detected)
+              <input type="text" id="fTest" placeholder="python -m pytest -q" autocomplete="off">
+            </label>
+            <label>Max iterations (optional)
+              <input type="number" id="fMax" min="1" placeholder="from config.json">
+            </label>
+          </div>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="fAsk" checked> Let the planner ask questions</label>
+            <label class="check"><input type="checkbox" id="fNoJudge"> Skip the judge</label>
+            <label class="check hide" id="onlyRow"><input type="checkbox" id="fOnly"> Only review (change nothing)</label>
+          </div>
+          <div class="row"><button class="primary" type="submit" id="startBtn">Start</button></div>
+        </form>
+      </section>
+
+      <!-- live job -->
+      <section id="vLive" class="hide" style="display:grid;gap:16px">
+        <div class="card">
+          <div class="row">
+            <h2 style="margin:0" id="liveTitle">Running</h2>
+            <span class="pill" id="liveState"></span>
+            <div class="spacer"></div>
+            <button id="openRunBtn" class="hide">Open run</button>
+            <button class="danger" id="stopBtn">Stop</button>
+          </div>
+          <p class="muted" id="liveReq" style="margin:6px 0 0"></p>
+          <div class="row small muted" style="margin-top:8px">
+            <span>node <b id="liveNode">—</b></span><span>task <b id="liveTask">—</b></span><span id="liveSteps">0 steps</span>
+          </div>
+          <div id="liveEnd" style="margin-top:10px"></div>
+        </div>
+        <form id="qForm" class="card hide">
+          <h3>The planner has questions</h3>
+          <p class="muted small" style="margin:0 0 10px">Leave one empty to let it assume something reasonable.</p>
+          <div class="questions" id="qList"></div>
+          <div class="row" style="margin-top:12px"><button class="primary" type="submit">Send answers</button></div>
+        </form>
+        <div class="card" id="livePlanCard">
+          <h3>Plan</h3>
+          <div id="livePlan" class="muted small">No plan yet.</div>
+        </div>
+        <div class="card">
+          <div class="row" style="margin-bottom:8px">
+            <h3 style="margin:0">Steps</h3><div class="spacer"></div>
+            <label class="check small"><input type="checkbox" id="follow" checked> Follow</label>
+          </div>
+          <div class="feed" id="feed"></div>
+        </div>
+      </section>
+
+      <!-- a run -->
+      <section id="vRun" class="hide" style="display:grid;gap:16px">
+        <div class="card">
+          <div class="row"><h2 style="margin:0" id="runTitle"></h2><span class="pill" id="runStatus"></span></div>
+          <p id="runReq" style="margin:6px 0"></p>
+          <p class="muted small" id="runMeta" style="margin:0"></p>
+          <div id="runErr"></div>
+          <div class="row" id="runActions" style="margin-top:10px"></div>
+          <form id="fixForm" class="hide" style="display:grid;gap:8px;margin-top:10px">
+            <label>What should change?<textarea id="fixReq" placeholder="list crashes on an empty file"></textarea></label>
+            <div class="row"><button class="primary" type="submit">Start fix</button><button type="button" id="fixCancel">Cancel</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="tabs" id="runTabs"></div>
+          <div id="runBody"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) n.append(k instanceof Node ? k : String(k));
+  return n;
+};
+const clear = (n) => { n.replaceChildren(); return n; };
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  const isJson = (r.headers.get("Content-Type") || "").includes("json");
+  const data = isJson ? await r.json() : await r.text();
+  if (!r.ok) throw new Error((isJson && data.error) || `HTTP ${r.status}`);
+  return data;
+}
+function flash(text, kind = "bad") {
+  const box = clear($("flash"));
+  if (text) box.append(el("div", { class: `msg ${kind}`, role: "status" }, text));
+}
+function pillClass(status) {
+  if (["accepted", "finished", "reviewed", "done", "applied"].includes(status)) return "ok";
+  if (["escalated", "partial", "max_iterations", "interrupted", "stopped", "stopping", "waiting", "planned"].includes(status)) return "warn";
+  if (["error", "plan_failed", "failed"].includes(status)) return "bad";
+  if (["running", "new"].includes(status)) return "info";
+  return "";
+}
+const pill = (status) => el("span", { class: `pill ${pillClass(status)}` }, status || "unknown");
+function ago(ts) {
+  if (!ts) return "";
+  const s = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (isNaN(s)) return "";
+  if (s < 60) return "just now"; if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`; return `${Math.floor(s / 86400)} d ago`;
+}
+
+// ---------------------------------------------------------------- views
+const state = { view: "new", kind: "build", runs: [], runId: null, run: null, tab: "overview", job: null, src: null, lastSeq: 0, steps: 0 };
+function show(view) {
+  state.view = view;
+  $("vNew").classList.toggle("hide", view !== "new");
+  $("vLive").classList.toggle("hide", view !== "live");
+  $("vRun").classList.toggle("hide", view !== "run");
+  renderRuns();
+}
+
+// ---------------------------------------------------------------- status + runs
+async function loadStatus() {
+  try {
+    const s = await api("/api/status");
+    const roles = clear($("roles"));
+    if (s.config_error) roles.append(el("span", { class: "pill bad" }, s.config_error));
+    const byModel = {};
+    for (const [role, name] of Object.entries(s.roles || {})) (byModel[name] ||= []).push(role);
+    for (const [name, rs] of Object.entries(byModel)) roles.append(el("span", {}, rs.join(", "), " ", el("b", {}, name)));
+    if (s.job && !state.job) attach(s.job, s.job.state !== "done" && s.job.state !== "stopped" && s.job.state !== "error");
+  } catch (e) { flash(`Can't reach the harness: ${e.message}`); }
+}
+async function loadRuns() {
+  try { state.runs = (await api("/api/runs")).runs; renderRuns(); }
+  catch (e) { flash(e.message); }
+}
+function renderRuns() {
+  const q = $("filter").value.trim().toLowerCase();
+  const box = clear($("runs"));
+  const rows = state.runs.filter(r => !q || `${r.id} ${r.request || ""} ${r.status}`.toLowerCase().includes(q));
+  if (!rows.length) box.append(el("p", { class: "muted small", style: "padding:12px" }, state.runs.length ? "No runs match." : "No runs yet."));
+  for (const r of rows) {
+    const live = state.job && state.job.run_id === r.id && !jobOver();
+    box.append(el("div", { class: `run-item${state.view === "run" && state.runId === r.id ? " sel" : ""}`, role: "listitem", tabindex: "0",
+        onclick: () => openRun(r.id), onkeydown: (e) => { if (e.key === "Enter") openRun(r.id); } },
+      el("div", { class: "req", title: r.request || "" }, r.request || r.id),
+      el("div", { class: "meta" }, live ? pill("running") : pill(r.status), r.kind === "review" ? el("span", {}, "review") : null,
+        r.tasks ? el("span", {}, `${r.tasks_done ?? 0}/${r.tasks} tasks`) : null, el("span", {}, ago(r.updated_at)))));
+  }
+}
+
+// ---------------------------------------------------------------- new run
+for (const b of $("kindTabs").querySelectorAll("button")) b.addEventListener("click", () => setKind(b.dataset.kind));
+function setKind(kind) {
+  state.kind = kind;
+  for (const b of $("kindTabs").querySelectorAll("button")) b.classList.toggle("on", b.dataset.kind === kind);
+  const review = kind === "review";
+  for (const id of ["pathRow", "testRow", "onlyRow"]) $(id).classList.toggle("hide", !review);
+  $("reqLabel").textContent = review ? "What should the review look at or fix? (optional)" : "What should it build?";
+  $("fReq").placeholder = review ? "Review the project for bugs and fix what you find." : "A Python CLI to-do app with add/list/done and pytest tests";
+}
+$("newBtn").addEventListener("click", () => { flash(""); show("new"); $("fReq").focus(); });
+$("liveBtn").addEventListener("click", () => show("live"));
+$("filter").addEventListener("input", renderRuns);
+$("newForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { kind: state.kind, request: $("fReq").value, ask: $("fAsk").checked, no_judge: $("fNoJudge").checked,
+                 max_iterations: $("fMax").value || null };
+  if (state.kind === "review") Object.assign(body, { path: $("fPath").value, test_command: $("fTest").value, only_review: $("fOnly").checked });
+  await startJob(body);
+});
+async function startJob(body) {
+  flash("");
+  try { const job = await api("/api/jobs", body); attach(job, true); }
+  catch (e) { flash(e.message); }
+}
+
+// ---------------------------------------------------------------- live job
+const jobOver = () => !state.job || ["done", "stopped", "error"].includes(state.job.state);
+function attach(job, switchTo) {
+  if (state.src) state.src.close();
+  state.job = job; state.lastSeq = 0; state.steps = 0;
+  clear($("feed")); clear($("liveEnd")); $("qForm").classList.add("hide");
+  $("liveReq").textContent = job.request || (job.kind === "resume" ? "Resuming a run" : "");
+  $("liveTitle").textContent = { build: "Building", plan: "Planning", review: "Reviewing", resume: "Resuming", fix: "Fixing" }[job.kind] || "Running";
+  $("livePlan").textContent = "No plan yet.";
+  updateJob();
+  $("liveBtn").classList.remove("hide");
+  const src = new EventSource(`/api/jobs/${encodeURIComponent(job.id)}/events`);
+  state.src = src;
+  src.onmessage = (m) => { const ev = JSON.parse(m.data); if (ev.seq > state.lastSeq) { state.lastSeq = ev.seq; onEvent(ev); } };
+  src.addEventListener("end", () => { src.close(); });
+  if (switchTo) show("live");
+}
+function updateJob() {
+  const j = state.job; if (!j) return;
+  $("liveState").replaceWith(Object.assign(pill(j.state), { id: "liveState" }));
+  $("liveNode").textContent = j.node || "—";
+  $("liveTask").textContent = j.task || "—";
+  $("liveSteps").textContent = `${state.steps} step${state.steps === 1 ? "" : "s"}`;
+  $("stopBtn").disabled = jobOver() || j.state === "stopping";
+  $("stopBtn").textContent = j.state === "stopping" ? "Stopping…" : "Stop";
+  $("openRunBtn").classList.toggle("hide", !j.run_id);
+  const jp = $("jobPill");
+  jp.className = `pill ${pillClass(j.state)}`; jp.textContent = `${j.kind}: ${j.state}`;
+  jp.classList.toggle("hide", false);
+}
+$("openRunBtn").addEventListener("click", () => state.job && state.job.run_id && openRun(state.job.run_id));
+$("stopBtn").addEventListener("click", async () => {
+  try { const info = await api(`/api/jobs/${encodeURIComponent(state.job.id)}/stop`, {}); Object.assign(state.job, { state: info.state }); updateJob(); }
+  catch (e) { flash(e.message); }
+});
+let planTimer = null;
+function refreshLivePlan() {
+  clearTimeout(planTimer);
+  planTimer = setTimeout(async () => {
+    if (!state.job || !state.job.run_id) return;
+    try { const d = await api(`/api/runs/${encodeURIComponent(state.job.run_id)}`); renderPlan($("livePlan"), d.plan, state.job.task); } catch (_) {}
+  }, 300);
+}
+function feedAdd(node) {
+  const f = $("feed");
+  f.append(node);
+  while (f.children.length > 1500) f.firstChild.remove();
+  if ($("follow").checked) f.scrollTop = f.scrollHeight;
+}
+function onEvent(ev) {
+  const j = state.job;
+  switch (ev.type) {
+    case "state": j.state = ev.state; break;
+    case "say": feedAdd(el("div", { class: "ev say" }, ev.text)); break;
+    case "node": {
+      const first = !j.run_id && ev.run_id;
+      Object.assign(j, { node: ev.node, task: ev.task, run_id: ev.run_id || j.run_id });
+      if (j.state !== "stopping") j.state = "running";
+      feedAdd(el("div", { class: "ev node" }, `→ ${ev.node}${ev.task ? `  (${ev.task})` : ""}`));
+      if (first) loadRuns();
+      refreshLivePlan();
+      break;
+    }
+    case "step": state.steps++; feedAdd(stepNode(ev)); break;
+    case "questions": j.state = "waiting"; showQuestions(ev.questions); break;
+    case "answers": $("qForm").classList.add("hide"); feedAdd(el("div", { class: "ev say" }, `answers: ${ev.answers.join(" · ")}`)); break;
+    case "done": case "stopped": case "error": {
+      j.state = ev.type; j.run_id = ev.run_id || j.run_id;
+      $("qForm").classList.add("hide");
+      const box = clear($("liveEnd"));
+      const text = ev.type === "done" ? `Finished: ${ev.status}` : ev.message;
+      box.append(el("div", { class: `msg ${ev.type === "done" && pillClass(ev.status) === "ok" ? "ok" : ev.type === "error" ? "bad" : ""}` }, text));
+      if (ev.type === "done" && ev.summary && ev.summary.verdict) box.append(el("p", { class: "small" }, verdictLine(ev.summary.verdict)));
+      if (ev.resumable && j.run_id) box.append(el("div", { class: "row", style: "margin-top:8px" },
+        el("button", { onclick: () => startJob({ kind: "resume", run: j.run_id }) }, "Resume")));
+      loadRuns(); refreshLivePlan();
+      if (state.view === "run" && state.runId === j.run_id) openRun(j.run_id, true);
+      break;
+    }
+  }
+  updateJob();
+  renderRuns();
+}
+function stepNode(ev) {
+  const cls = ev.error ? "err" : ev.final != null ? "fin" : "";
+  const head = el("div", { class: "head" }, el("span", { class: "muted small" }, `#${ev.n}${ev.task ? ` · ${ev.task}` : ""}`));
+  if (ev.error) head.append(el("span", { class: "pill bad" }, "unreadable reply"));
+  else if (ev.action) head.append(el("span", { class: "act" }, ev.action));
+  else if (ev.final != null) head.append(el("span", { class: "pill ok" }, "final"));
+  const box = el("div", { class: `ev step ${cls}` }, head);
+  if (ev.thought) box.append(el("div", {}, ev.thought));
+  if (ev.args) box.append(el("details", {}, el("summary", {}, "arguments"), el("pre", {}, ev.args)));
+  if (ev.observation != null) box.append(el("details", {}, el("summary", {}, "observation"), el("pre", {}, ev.observation)));
+  if (ev.final != null) box.append(el("details", { open: true }, el("summary", {}, "answer"), el("pre", {}, ev.final)));
+  if (ev.error) box.append(el("pre", { class: "small" }, ev.error), ev.raw ? el("details", {}, el("summary", {}, "raw reply"), el("pre", {}, ev.raw)) : null);
+  return box;
+}
+function showQuestions(qs) {
+  const list = clear($("qList"));
+  qs.forEach((q, i) => list.append(el("label", {}, `${i + 1}. ${q}`, el("input", { type: "text", "data-i": i, autocomplete: "off" }))));
+  $("qForm").classList.remove("hide");
+  show("live");
+  const first = list.querySelector("input"); if (first) first.focus();
+}
+$("qForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const answers = [...$("qList").querySelectorAll("input")].map(i => i.value);
+  try { await api(`/api/jobs/${encodeURIComponent(state.job.id)}/answers`, { answers }); $("qForm").classList.add("hide"); }
+  catch (err) { flash(err.message); }
+});
+
+// ---------------------------------------------------------------- a run
+function verdictLine(v) {
+  const reqs = v.requirements || [];
+  return `judge: ${v.verdict} — ${reqs.filter(r => r.met).length}/${reqs.length} requirements met${v.summary ? `. ${v.summary}` : ""}`;
+}
+function renderPlan(box, plan, current) {
+  clear(box);
+  if (!plan) { box.append(el("span", { class: "muted small" }, "No plan yet.")); return; }
+  box.append(el("p", { style: "margin:0 0 8px" }, el("b", {}, plan.title || ""), plan.summary ? el("span", { class: "muted" }, ` — ${plan.summary}`) : null));
+  const t = el("table", {}, el("tr", {}, el("th", {}, "task"), el("th", {}, "title"), el("th", {}, "status"), el("th", {}, "steps"), el("th", {}, "done when")));
+  for (const task of plan.tasks || []) {
+    const dw = task.done_when ? (task.done_when.command || (task.done_when.file ? `file ${task.done_when.file}` : JSON.stringify(task.done_when))) : "";
+    t.append(el("tr", {}, el("td", {}, el("code", {}, task.id || "")), el("td", {}, task.title || ""),
+      el("td", {}, task.id === current && task.status !== "done" ? pill("running") : pill(task.status)),
+      el("td", {}, task.steps ?? ""), el("td", {}, el("code", {}, dw))));
+  }
+  box.append(t);
+}
+async function openRun(id, keepTab) {
+  flash("");
+  try {
+    const d = await api(`/api/runs/${encodeURIComponent(id)}`);
+    if (!keepTab || state.runId !== id) state.tab = "overview";
+    state.runId = id; state.run = d;
+    renderRun(); show("run");
+  } catch (e) { flash(e.message); }
+}
+function renderRun() {
+  const d = state.run;
+  $("runTitle").textContent = d.plan && d.plan.title ? d.plan.title : d.id;
+  $("runStatus").replaceWith(Object.assign(pill(d.status), { id: "runStatus" }));
+  $("runReq").textContent = d.request || "";
+  const s = d.summary || {};
+  $("runMeta").textContent = [d.id, d.source ? `from ${d.source}` : null, s.duration_s ? `${Math.round(s.duration_s)} s` : null,
+    s.steps ? `${s.steps} steps` : null, d.revisions ? `${d.revisions} revision(s)` : null, d.updated_at ? `updated ${ago(d.updated_at)}` : null].filter(Boolean).join(" · ");
+  const err = clear($("runErr"));
+  if (d.error) err.append(el("div", { class: "msg bad", style: "margin-top:8px" }, d.error));
+  const acts = clear($("runActions"));
+  const live = state.job && state.job.run_id === d.id && !jobOver();
+  if (live) acts.append(el("button", { onclick: () => show("live") }, "Watch live"));
+  else {
+    if (d.actions.build_plan) acts.append(el("button", { class: "primary", onclick: () => startJob({ kind: "resume", run: d.id }) }, "Build this plan"));
+    else if (d.actions.resume) acts.append(el("button", { class: "primary", onclick: () => startJob({ kind: "resume", run: d.id }) }, "Resume"));
+    if (d.actions.fix) acts.append(el("button", { onclick: () => { $("fixForm").classList.remove("hide"); $("fixReq").focus(); } }, "Fix or add…"));
+    if (d.actions.apply) {
+      const ap = d.apply || {};
+      const n = (ap.changed || []).length + (ap.added || []).length + (ap.deleted || []).length;
+      if (ap.applied) acts.append(el("button", { onclick: () => doApply({ undo: true }, "Put the original folder back?") }, "Undo apply"));
+      else if (n) acts.append(el("button", { class: "primary", onclick: () => doApply({}, `Write ${n} file change(s) into ${ap.source}? A backup is kept for undo.`) }, `Apply ${n} change(s)`));
+    }
+    if (d.export && d.export.project) acts.append(el("button", { title: "The generated code (the run's workspace folder) as a .zip",
+      onclick: (e) => exportRun(d.id, "project", e.currentTarget) }, "Download project (.zip)"));
+    acts.append(el("button", { title: "Everything in the run folder: code, spec, report, patch, plan and trace",
+      onclick: (e) => exportRun(d.id, "run", e.currentTarget) }, "Download whole run"));
+  }
+  $("fixForm").classList.add("hide");
+  const tabs = [["overview", "Overview"]];
+  for (const doc of d.docs) if (doc !== "plan.json") tabs.push([doc, doc === "CHANGES.patch" ? "Patch" : doc]);
+  if (d.trace) tabs.push(["trace", "Trace"]);
+  if (d.docs.includes("plan.json")) tabs.push(["plan.json", "plan.json"]);
+  if (!tabs.some(([k]) => k === state.tab)) state.tab = "overview";
+  const tb = clear($("runTabs"));
+  for (const [k, label] of tabs) tb.append(el("button", { class: state.tab === k ? "on" : "", onclick: () => { state.tab = k; renderRun(); } }, label));
+  renderTab();
+}
+async function renderTab() {
+  const d = state.run, body = clear($("runBody")), tab = state.tab;
+  if (tab === "overview") {
+    const s = d.summary || {};
+    if (s.verdict) body.append(el("p", {}, verdictLine(s.verdict)));
+    if (s.verdict && s.verdict.requirements) {
+      const ul = el("ul", { class: "small" });
+      for (const r of s.verdict.requirements) ul.append(el("li", {}, r.met ? "✓ " : "✗ ", r.requirement || ""));
+      body.append(ul);
+    }
+    if (s.final_checks && s.final_checks.length) body.append(el("p", { class: "small" }, "final checks: ",
+      ...s.final_checks.map(c => el("span", { class: `pill ${c.ok ? "ok" : "bad"}`, style: "margin-right:4px" }, `${c.ok ? "✓" : "✗"} ${c.target || c.kind || ""}`))));
+    const planBox = el("div"); renderPlan(planBox, d.plan, d.current_task); body.append(planBox);
+    if (d.apply) {
+      const ap = d.apply;
+      const box = el("div", { style: "margin-top:14px" }, el("h3", {}, "Apply to the original folder"));
+      if (ap.error) box.append(el("div", { class: "msg bad" }, ap.error));
+      else {
+        if (ap.applied) box.append(el("div", { class: "msg ok" }, `Applied ${ap.applied.at || ""}`.trim()));
+        const ul = el("ul", { class: "small" });
+        for (const [k, m] of [["changed", "M"], ["added", "A"], ["deleted", "D"]]) for (const f of ap[k] || []) ul.append(el("li", {}, el("code", {}, `${m} ${f}`)));
+        box.append(el("p", { class: "small muted" }, ap.source || ""), ul.children.length ? ul : el("p", { class: "muted small" }, "No changes."));
+        if ((ap.conflicts || []).length) box.append(el("div", { class: "msg bad" }, `Changed since the import (apply refuses these): ${ap.conflicts.join(", ")}`));
+      }
+      body.append(box);
+    }
+    if (s.files && s.files.length) body.append(el("p", { class: "small muted", style: "margin-top:12px" }, `files: ${s.files.map(f => f.path).join(", ")}`));
+    return;
+  }
+  body.append(el("p", { class: "muted small" }, "Loading…"));
+  try {
+    const url = tab === "trace" ? `/api/runs/${encodeURIComponent(d.id)}/trace` : `/api/runs/${encodeURIComponent(d.id)}/doc/${encodeURIComponent(tab)}`;
+    const text = await api(url);
+    if (state.tab !== tab || state.run !== d) return;
+    clear(body);
+    if (tab === "CHANGES.patch") body.append(diffView(text));
+    else if (tab.endsWith(".md")) body.append(markdown(text));
+    else body.append(el("pre", { class: "box" }, text));
+  } catch (e) { clear(body).append(el("div", { class: "msg bad" }, e.message)); }
+}
+async function doApply(opts, question) {
+  if (!confirm(question)) return;
+  try {
+    let r = await api(`/api/runs/${encodeURIComponent(state.runId)}/apply`, opts);
+    flash(opts.undo ? "The original folder is back the way it was." : `Applied to ${r.applied.source}.`, "ok");
+  } catch (e) {
+    if (!opts.undo && !opts.force && /accepted|finished/.test(e.message) && confirm(`${e.message}\n\nApply anyway?`)) return doApply({ ...opts, force: true }, "Apply anyway?");
+    flash(e.message);
+  }
+  openRun(state.runId, true);
+}
+async function exportRun(id, what, button) {
+  const label = button.textContent;
+  button.disabled = true; button.textContent = "Zipping…";
+  try {
+    const r = await fetch(`/api/runs/${encodeURIComponent(id)}/export?what=${what}`);
+    if (!r.ok) {
+      const isJson = (r.headers.get("Content-Type") || "").includes("json");
+      throw new Error(isJson ? (await r.json()).error : `HTTP ${r.status}`);
+    }
+    const name = (/filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "") || [])[1] || `${id}.zip`;
+    const url = URL.createObjectURL(await r.blob());
+    const a = el("a", { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    flash(`Downloaded ${name}.`, "ok");
+  } catch (e) { flash(`Export failed: ${e.message}`); }
+  finally { button.disabled = false; button.textContent = label; }
+}
+$("fixCancel").addEventListener("click", () => $("fixForm").classList.add("hide"));
+$("fixForm").addEventListener("submit", (e) => { e.preventDefault(); startJob({ kind: "fix", run: state.runId, request: $("fixReq").value }); });
+
+// ---------------------------------------------------------------- text renderers (text nodes only; nothing is parsed as HTML)
+function diffView(text) {
+  const pre = el("pre", { class: "box diff" });
+  for (const line of text.split("\n")) {
+    const c = /^(diff |--- |\+\+\+ )/.test(line) ? "file" : line.startsWith("@@") ? "hunk" : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
+    pre.append(el("span", { class: `l ${c}` }, line || " "));
+  }
+  return pre;
+}
+function inline(text) {
+  const out = [];
+  for (const part of text.split(/(`[^`]+`|\*\*[^*]+\*\*)/)) {
+    if (!part) continue;
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 1) out.push(el("code", {}, part.slice(1, -1)));
+    else if (part.startsWith("**") && part.endsWith("**") && part.length > 3) out.push(el("b", {}, part.slice(2, -2)));
+    else out.push(part);
+  }
+  return out;
+}
+function markdown(text) {
+  const root = el("div", { class: "doc" });
+  let code = null, list = null, para = null;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("```")) {
+      if (code) { root.append(el("pre", {}, code.join("\n"))); code = null; } else { code = []; list = para = null; }
+      continue;
+    }
+    if (code) { code.push(line); continue; }
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
+    const li = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (h) { root.append(el(`h${h[1].length}`, {}, ...inline(h[2]))); list = para = null; }
+    else if (li) { if (!list) { list = el("ul"); root.append(list); } list.append(el("li", {}, ...inline(li[1]))); para = null; }
+    else if (/^\s*\|/.test(line)) { if (!para || para.tagName !== "PRE") { para = el("pre"); root.append(para); } else para.append("\n"); para.append(line); list = null; }
+    else if (!line.trim()) { list = para = null; }
+    else { if (!para || para.tagName !== "P") { para = el("p"); root.append(para); } else para.append(el("br")); para.append(...inline(line)); list = null; }
+  }
+  if (code) root.append(el("pre", {}, code.join("\n")));
+  return root;
+}
+
+// ---------------------------------------------------------------- start
+loadStatus(); loadRuns();
+setInterval(() => { if (jobOver()) loadRuns(); }, 15000);
+</script>
+</body>
+</html>
