@@ -33,7 +33,8 @@ from judge import (apply_rules, final_checks_evidence, make_verdict, render_repo
                    workspace_contents)
 from graph import END, Graph
 from loop import Step
-from planner import PlanError, load_plan, make_plan, render_tasks, revise_plan, revision_section, save_plan
+from planner import (PlanError, load_plan, make_plan, render_tasks, reopen_tasks, revise_plan, revision_section,
+                     save_plan)
 from runtime import allowed_programs, build_registry
 from state import BuildState, load_state, save_state
 from tracing import NullTracer, RoleModel
@@ -185,6 +186,25 @@ def human_verdict(feedback: str, round_no: int) -> dict:
     """A person's fix request, shaped like a judge verdict so the revise node can use it."""
     return {"verdict": "revise", "source": "human", "requirements": [], "problems": [],
             "feedback": feedback.strip(), "summary": "", "overrides": [], "round": round_no}
+
+
+def rerun_verdict(ids: list[str], round_no: int) -> dict:
+    """Chapter G: a person re-ran tasks. Recorded like a fix request, so a run without a judge isn't
+    labelled by the judge's earlier verdict; with a judge, its new verdict comes after this one."""
+    return {"verdict": "rerun", "source": "human", "requirements": [], "problems": [],
+            "feedback": f"re-run {', '.join(ids)}", "summary": "", "overrides": [], "round": round_no}
+
+
+REPLAN_DEFAULT = "Break it into smaller tasks, each with its own check."
+
+
+def replan_feedback(task: dict, comment: str) -> str:
+    """Chapter G: what the reviser is told when a person asks to re-plan one task."""
+    return (f"Re-plan task {task['id']} (\"{task['title']}\"): {comment.strip() or REPLAN_DEFAULT}\n"
+            f"Replace {task['id']} with new tasks that do its work in the way asked; the harness drops "
+            f"{task['id']} and makes the tasks that depended on it depend on your new tasks. "
+            f"New tasks can depend on what {task['id']} depended on "
+            f"({', '.join(task['depends_on']) or 'nothing'}), not on {task['id']} itself.")
 
 
 def append_index(ctx: Context, s: BuildState) -> None:
@@ -646,7 +666,8 @@ def build_graph(ctx: Context) -> Graph:
                 ctx.model_for("reviser"), P, request=s.request, plan=s.plan, spec=s.spec or "",
                 plan_status=plan_status(s.plan), verdict=verdict, files=_files_listing(run.workspace),
                 round_no=round_no, max_attempts=cfg_plan.get("max_attempts", 3), max_tasks=max_tasks,
-                log=lambda e: _append_jsonl(run.dir / "planner.jsonl", e), allowed=allowed)
+                log=lambda e: _append_jsonl(run.dir / "planner.jsonl", e), allowed=allowed,
+                replace=verdict.get("replan"))
         except PlanError as e:
             verdict["overrides"].append({"from": "revise", "to": "escalate", "reason": f"revision failed: {e}"})
             verdict["verdict"] = "escalate"
@@ -808,10 +829,41 @@ def run_pipeline(
     only_review: bool = False,
     test_command: str | None = None,
     on_enter: Callable[[str, BuildState], None] | None = None,
+    rerun: list[str] | None = None,
+    rerun_dependents: bool = True,
+    replan: str | None = None,
 ) -> dict:
-    """Start a new build, resume one from its state.json, or (`fix`) revise a finished one."""
-    if resume_dir and fix is not None:
+    """Start a new build, resume one from its state.json, (`fix`) revise a finished one, or (`rerun`)
+    run some of its dropped, failed or blocked tasks again and judge it again."""
+    if resume_dir and rerun is not None:                  # Chapter G follow-up: re-run tasks
         state = load_state(resume_dir)
+        if state.plan is None:
+            raise PlanError(f"{state.run_dir} was built without a plan (--no-plan); there are no tasks to re-run")
+        if state.next or state.status in RESUMABLE_ENDED | {"planned", "plan_failed"}:
+            raise PlanError(f"{state.run_dir} hasn't finished (status: {state.status}). "
+                            "Finish it first with --resume (or --from-run for a reviewed plan)")
+        run_dir = Path(state.run_dir)
+        state.plan, state.spec = load_plan(run_dir, ctx.config.get("plan", {}).get("max_tasks", 12) * 2)
+        reopened = reopen_tasks(state.plan, rerun, dependents=rerun_dependents)
+        _save_plan_json(run_dir, state.plan)
+        with open(run_dir / "SPEC.md", "a", encoding="utf-8") as f:
+            f.write("\n## Re-run (requested by a person)\n\n**Re-opened:** " + ", ".join(reopened) + "\n")
+        state.spec = (run_dir / "SPEC.md").read_text(encoding="utf-8")
+        _append_jsonl(run_dir / "transcript.jsonl", {"event": "rerun", "at": _now(), "asked": list(rerun),
+                                                     "reopened": reopened})
+        state.verdicts.append(rerun_verdict(reopened, state.revisions))
+        state.revision_base = state.revisions               # the judge gets its full budget again
+        state.final_checks, state.error, state.current_task = None, None, None
+        start = "next_task"
+        if judge is not None:
+            state.options["judge"] = judge
+        if max_iterations:
+            state.options["max_iterations"] = max_iterations
+        ctx.say(f"[run] {state.run_dir}  (re-running: {', '.join(reopened)})")
+    elif resume_dir and (fix is not None or replan):
+        state = load_state(resume_dir)
+        if replan and not (fix or "").strip():
+            fix = REPLAN_DEFAULT
         if not fix.strip():
             raise PlanError("--fix needs a description of what to change")
         if state.plan is None:
@@ -821,13 +873,24 @@ def run_pipeline(
             raise PlanError(f"{state.run_dir} hasn't finished (status: {state.status}). "
                             "Finish it first with --resume (or --from-run for a reviewed plan)")
         state.plan, state.spec = load_plan(Path(state.run_dir), ctx.config.get("plan", {}).get("max_tasks", 12) * 2)
-        state.verdicts.append(human_verdict(fix, state.revisions))
+        if replan:                                        # Chapter G follow-up: re-plan one task
+            by_id = {t["id"]: t for t in state.plan["tasks"]}
+            if replan not in by_id:
+                raise PlanError(f"no task {replan!r} (tasks: {', '.join(by_id)})")
+            if by_id[replan]["status"] == "done":
+                raise PlanError(f"{replan} is done; to change finished work, use --fix with a comment")
+            verdict = human_verdict(replan_feedback(by_id[replan], fix), state.revisions)
+            verdict["replan"] = replan
+        else:
+            verdict = human_verdict(fix, state.revisions)
+        state.verdicts.append(verdict)
         state.revision_base = state.revisions + 1         # the judge gets its full budget again
         state.error = None
         start = "revise"
         if judge is not None:
             state.options["judge"] = judge
-        ctx.say(f"[run] {state.run_dir}  (fixing: {' '.join(fix.split())[:80]})")
+        what = f"re-planning {replan}: " if replan else "fixing: "
+        ctx.say(f"[run] {state.run_dir}  ({what}{' '.join(fix.split())[:80]})")
     elif resume_dir:
         state = load_state(resume_dir)
         if state.next:

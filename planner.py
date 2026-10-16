@@ -24,7 +24,8 @@ PROGRESS_FIELDS = ("handoff", "error", "steps", "malformed", "tool_calls", "dura
                    "checks", "verified", "fix_attempts", "fix_pending", "attempt_open",   # + Stage 9
                    "lessons_shown",                                                        # + Chapter B
                    "signals", "sensor_state", "sensor_warned",                             # + Chapter E
-                   "dropped_in")                                                           # + Chapter I
+                   "dropped_in",                                                           # + Chapter I
+                   "reopened")                                                             # + Chapter G: --rerun
 
 Asker = Callable[[list[str]], list[str]]   # questions -> answers
 
@@ -352,6 +353,59 @@ RESETTABLE = {"failed", "blocked"}
 DROPPABLE = {"failed", "blocked", "pending"}
 
 
+REOPENABLE = {"dropped", "failed", "blocked"}                   # Chapter G: --rerun
+
+
+def reopen_tasks(plan: dict, ids: list[str], *, dependents: bool = True) -> list[str]:
+    """Set tasks back to pending so the build runs them again; returns the reopened ids in plan order.
+
+    With `dependents`, unfinished (dropped, failed or blocked) tasks that depend on a reopened task come
+    too. A task can't be reopened while a task it needs is unfinished and not reopened with it: it would
+    only be blocked again. Every problem is one readable PlanError.
+    """
+    by_id = {t["id"]: t for t in plan["tasks"]}
+    ids = list(dict.fromkeys(str(x).strip() for x in ids if str(x).strip()))
+    if not ids:
+        raise PlanError("say which task to re-run, e.g. T3")
+    errors = []
+    for tid in ids:
+        if tid not in by_id:
+            errors.append(f"no task {tid!r} (tasks: {', '.join(by_id)})")
+        elif by_id[tid]["status"] not in REOPENABLE:
+            errors.append(f"{tid} is {by_id[tid]['status']}; only dropped, failed or blocked tasks can be re-run "
+                          "(use --fix to change finished work)")
+    if errors:
+        raise PlanError("; ".join(errors))
+    chosen = set(ids)
+    changed = dependents
+    while changed:
+        changed = False
+        for t in plan["tasks"]:
+            if t["id"] not in chosen and t["status"] in REOPENABLE and any(d in chosen for d in t["depends_on"]):
+                chosen.add(t["id"])
+                changed = True
+    needed: list[str] = []
+    for t in plan["tasks"]:
+        if t["id"] in chosen:
+            missing = [d for d in t["depends_on"] if d not in chosen and by_id.get(d, {}).get("status") != "done"]
+            if missing:
+                need = [f"{d} ({by_id[d]['status']})" if d in by_id else d for d in missing]
+                errors.append(f"{t['id']} needs {', '.join(need)}")
+                needed += [d for d in missing if d not in needed]
+    if errors:
+        raise PlanError("; ".join(errors) + f": re-run {', '.join(needed)} too (what depends on it comes with it)")
+    for t in plan["tasks"]:
+        if t["id"] in chosen:
+            t["status"] = "pending"
+            t["fix_attempts"] = 0
+            t["verified"] = False
+            t["attempt_open"] = False
+            t["reopened"] = t.get("reopened", 0) + 1
+            for k in ("fix_pending", "error", "dropped_in"):
+                t.pop(k, None)
+    return [t["id"] for t in plan["tasks"] if t["id"] in chosen]
+
+
 def _drop(tasks: list[dict], ids: list[str]) -> list[str]:
     """Mark tasks dropped, plus every unfinished task that depends on one. Returns all dropped ids."""
     dropped = set(ids)
@@ -370,8 +424,12 @@ def _drop(tasks: list[dict], ids: list[str]) -> list[str]:
     return [t["id"] for t in tasks if t["id"] in dropped]
 
 
-def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
-    """Merge a reviser reply into a copy of the plan. Returns (merged object, problems)."""
+def _apply_revision(plan: dict, obj: dict, replace: str | None = None) -> tuple[dict, list[str]]:
+    """Merge a reviser reply into a copy of the plan. Returns (merged object, problems).
+
+    `replace` (Chapter G: --replan): a task a person asked to re-plan. It must be replaced by new tasks,
+    and the tasks that depended on it are rewired to them instead of being dropped with it.
+    """
     errors = []
     by_id = {t["id"]: t for t in plan["tasks"]}
     retry = obj.get("retry", []) or []
@@ -386,13 +444,27 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
     if not isinstance(drop, list) or not all(isinstance(x, str) for x in drop):
         errors.append("'drop' must be a list of task ids")
         drop = []
+    if replace and by_id.get(replace, {}).get("status") == "dropped":
+        drop = [x for x in drop if x != replace]    # already dropped: listing it again is harmless
     for tid in drop:
         if tid not in by_id:
             errors.append(f"drop: unknown task '{tid}'")
         elif by_id[tid]["status"] not in DROPPABLE:
             errors.append(f"drop: task '{tid}' is {by_id[tid]['status']}; only failed, blocked or pending tasks can be dropped")
+    new_list = [t for t in new_tasks if isinstance(t, dict)]
+    new_ids = {t.get("id") for t in new_list}
+    if replace:
+        if replace in retry:
+            errors.append(f"retry: {replace} is being re-planned; don't retry it, replace it with new tasks")
+        if not new_list:
+            errors.append(f"add the new task(s) that replace {replace} under 'tasks'")
+        for t in new_list:
+            if replace in (t.get("depends_on") or []):
+                errors.append(f"task {t.get('id')}: it can't depend on {replace}, which it replaces; "
+                              f"depend on what {replace} depended on ({', '.join(by_id[replace]['depends_on']) or 'nothing'})")
+        if replace not in drop and by_id.get(replace, {}).get("status") in DROPPABLE:
+            drop = [*drop, replace]                 # the person asked for it: no need to make the model say so
     retry = [x for x in retry if x not in drop]
-    new_ids = {t.get("id") for t in new_tasks if isinstance(t, dict)}
     retry = [x for x in retry if x not in new_ids]      # Chapter I: new task ids listed under retry too — just drop them
     done_checks = {json.dumps(t["done_when"], sort_keys=True): t["id"] for t in plan["tasks"] if t["status"] == "done"}
     for t in new_tasks:
@@ -411,6 +483,15 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
             errors.append(f"retry: task '{tid}' is {by_id[tid]['status']}; only failed or blocked tasks can be retried "
                           "(add a new task to change finished work)")
     merged = json.loads(json.dumps(plan))           # deep copy
+    if replace and new_list and not errors:         # rewire before dropping, so dependents aren't dropped with it
+        needed = {d for t in new_list for d in (t.get("depends_on") or []) if isinstance(d, str)}
+        last = [t["id"] for t in new_list if t.get("id") not in needed]
+        merged["_rewired"] = []
+        for t in merged["tasks"]:
+            if t["status"] != "done" and replace in t["depends_on"]:
+                t["depends_on"] = list(dict.fromkeys(d for dep in t["depends_on"]
+                                                     for d in (last if dep == replace else [dep])))
+                merged["_rewired"].append(t["id"])
     merged["_dropped"] = _drop(merged["tasks"], [x for x in drop if x in by_id and by_id[x]["status"] in DROPPABLE])
     for t in merged["tasks"]:
         if t["id"] in retry or (retry and t["status"] == "blocked"):
@@ -429,8 +510,12 @@ def _apply_revision(plan: dict, obj: dict) -> tuple[dict, list[str]]:
 
 def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spec: str, plan_status: str,
                 verdict: dict, files: str, round_no: int, max_attempts: int = 3, max_tasks: int = 15,
-                log: Callable[[dict], None] | None = None, allowed: set[str] | None = None) -> tuple[dict, dict]:
-    """Turn judge feedback into plan changes. Returns (new plan, change record)."""
+                log: Callable[[dict], None] | None = None, allowed: set[str] | None = None,
+                replace: str | None = None) -> tuple[dict, dict]:
+    """Turn judge feedback into plan changes. Returns (new plan, change record).
+
+    `replace`: a task a person asked to re-plan (Chapter G: --replan); see _apply_revision.
+    """
     retryable = ", ".join(t["id"] for t in plan["tasks"] if t["status"] in RESETTABLE) or "(none: add new tasks)"
     active = sum(1 for t in plan["tasks"] if t["status"] != "dropped")
     message = (prompts["revise_request"]
@@ -451,9 +536,10 @@ def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spe
         except ParseError as e:
             errors = [f"no JSON object in the reply ({e})"]
         else:
-            merged, errors = _apply_revision(plan, obj)
+            merged, errors = _apply_revision(plan, obj, replace=replace)
             if not errors:
                 dropped = merged.pop("_dropped", [])
+                rewired = merged.pop("_rewired", [])
                 for t in merged["tasks"]:
                     if t["id"] in dropped:
                         t["dropped_in"] = round_no
@@ -466,6 +552,8 @@ def revise_plan(model, prompts: dict[str, str], *, request: str, plan: dict, spe
                               "retry": [x for x in (obj.get("retry") or []) if x in known and x not in dropped],
                               "dropped": dropped,
                               "added": [t["id"] for t in new_plan["tasks"] if t["id"] not in known]}
+                    if replace:
+                        record.update(replaced=replace, rewired=rewired)
                     if log:
                         log({"revision": round_no, "attempt": attempt, "raw": raw, "ok": True})
                     return new_plan, record
@@ -483,6 +571,9 @@ def revision_section(record: dict, verdict: dict, plan: dict) -> str:
              f"**Changes:** {record['changes'] or '(not described)'}", ""]
     if record["retry"]:
         lines += [f"**Retried:** {', '.join(record['retry'])}", ""]
+    if record.get("replaced"):
+        lines += [f"**Re-planned:** {record['replaced']} → {', '.join(record['added'])}"
+                  + (f" (now depended on by {', '.join(record['rewired'])})" if record.get("rewired") else ""), ""]
     if record.get("dropped"):
         lines += [f"**Dropped (replaced or no longer needed):** {', '.join(record['dropped'])}", ""]
     if added:

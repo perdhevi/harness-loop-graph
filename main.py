@@ -15,6 +15,8 @@ Usage:
     python main.py review PATH "..." --apply       # … and copy the changes back if the run is accepted
     python main.py apply runs/<id> [--dry-run]     # copy a review run's changes back into the original folder
     python main.py apply --undo runs/<id>          # put the folder back the way it was
+    python main.py build --rerun runs/<id> T3      # run dropped/failed/blocked tasks again, judge again (Chapter G)
+    python main.py build --replan runs/<id> T3 "split it in two"   # replace one unfinished task with new ones
     python main.py build --no-plan "..."          # Stage 5 behaviour
     python main.py build --no-judge "..."         # Stage 9 behaviour (checks, no judge)
     python main.py build --max-iterations 60 "..."
@@ -145,7 +147,8 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
               judge: bool | None = None, verbose_graph: bool = True, config: dict | None = None,
               tags: dict | None = None, quiet: bool = False, fix: str | None = None,
               source: str | None = None, only_review: bool = False, test_command: str | None = None,
-              say=None, on_step=None, on_enter=None) -> dict:
+              say=None, on_step=None, on_enter=None, rerun: list[str] | None = None,
+              rerun_dependents: bool = True, replan: str | None = None) -> dict:
     """Plan and build through the graph. `from_run` resumes a paused or stopped run.
 
     `config` overrides config.json (Chapter F: benchmarks pick provider/model); `tags` go to the run index.
@@ -175,7 +178,8 @@ def run_build(request: str | None, max_iterations: int | None = None, *, model=N
     return run_pipeline(ctx, request, resume_dir=from_run, review=review, no_plan=no_plan,
                         max_iterations=max_iterations, judge=judge, tags=tags, fix=fix,
                         source=source, only_review=only_review, test_command=test_command,
-                        on_enter=None if quiet else on_enter)
+                        on_enter=None if quiet else on_enter, rerun=rerun, rerun_dependents=rerun_dependents,
+                        replan=replan)
 
 
 def print_summary(s: dict) -> None:
@@ -278,17 +282,41 @@ def main_build(argv: list[str]) -> int:
     parser.add_argument("--no-judge", action="store_true", help="skip the judge (Stage 9 behaviour)")
     parser.add_argument("--fix", metavar="RUN_DIR",
                         help="change a finished run; the request text says what to fix or add")
+    parser.add_argument("--rerun", metavar="RUN_DIR",
+                        help="run dropped, failed or blocked tasks of a finished run again, then judge it again; "
+                             "the request text lists the task ids, e.g. --rerun runs/<id> T3")
+    parser.add_argument("--replan", metavar="RUN_DIR",
+                        help="replace one unfinished task of a finished run with new tasks; the request text is the "
+                             "task id and how, e.g. --replan runs/<id> T3 split it into smaller tasks")
+    parser.add_argument("--no-dependents", action="store_true",
+                        help="with --rerun: reopen only the tasks named, not the unfinished tasks that depend on them")
     args = parser.parse_args(argv)
     if args.fix and (args.from_run or args.resume or args.review or args.no_plan):
         parser.error("--fix can't be combined with --from-run, --resume, --review or --no-plan")
+    if args.rerun and (args.fix or args.from_run or args.resume or args.review or args.no_plan):
+        parser.error("--rerun can't be combined with --fix, --from-run, --resume, --review or --no-plan")
+    if args.replan and (args.rerun or args.fix or args.from_run or args.resume or args.review or args.no_plan):
+        parser.error("--replan can't be combined with --rerun, --fix, --from-run, --resume, --review or --no-plan")
+    if args.no_dependents and not args.rerun:
+        parser.error("--no-dependents only goes with --rerun")
     if args.review and args.no_plan:
         parser.error("--review needs a plan; drop --no-plan")
     if args.from_run and args.resume:
         parser.error("use either --from-run or --resume")
     args.from_run = args.from_run or args.resume
 
-    request = fix = None
-    if args.fix:
+    request = fix = rerun = replan = None
+    if args.replan:
+        if not args.request:
+            print("Say which task to re-plan, and how, e.g. build --replan runs/<id> T3 split it into smaller tasks")
+            return 1
+        replan, fix = args.request[0].strip(), " ".join(args.request[1:]).strip()
+    elif args.rerun:
+        rerun = [t for part in args.request for t in part.replace(",", " ").split()]
+        if not rerun:
+            print("Say which task(s) to re-run, e.g. build --rerun runs/<id> T3")
+            return 1
+    elif args.fix:
         fix = " ".join(args.request).strip() or input("what should change> ").strip()
         if not fix:
             print("Say what to fix, e.g. build --fix runs/<id> \"list crashes on an empty file\"")
@@ -302,8 +330,9 @@ def main_build(argv: list[str]) -> int:
     try:
         summary = run_build(request, args.max_iterations,
                             ask=ask_in_terminal if interactive else None,
-                            review=args.review, from_run=args.from_run or args.fix, no_plan=args.no_plan, fix=fix,
-                            judge=False if args.no_judge else None)
+                            review=args.review, from_run=args.from_run or args.fix or args.rerun or args.replan,
+                            no_plan=args.no_plan, fix=fix, judge=False if args.no_judge else None,
+                            rerun=rerun, rerun_dependents=not args.no_dependents, replan=replan)
     except RunStopped as e:
         what = "interrupted" if isinstance(e.cause, KeyboardInterrupt) else f"stopped: {type(e.cause).__name__}: {e}"
         print(f"\n[{what}]")

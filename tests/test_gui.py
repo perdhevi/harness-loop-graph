@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import gui  # noqa: E402
 import main  # noqa: E402
+import test_rerun  # noqa: E402
 import test_review as tr  # noqa: E402  (the review sample, its replies and FakeModel)
 from state import load_state  # noqa: E402
 
@@ -53,7 +54,7 @@ class Server(unittest.TestCase):
         config["memory"]["enabled"] = False
         (self.tmp / "config.json").write_text(json.dumps(config), encoding="utf-8")
         self.models: list = []
-        real_run_build = main.run_build
+        real_run_build = self.real_run_build = main.run_build
 
         def run_build(request, **kw):                     # what the page starts, with a scripted model
             return real_run_build(request, model=self.models.pop(0), **kw)
@@ -239,6 +240,60 @@ class JobTests(Server):
             status, r = self.call("/api/jobs", body)
             self.assertIn(status, (400, 404), body)
             self.assertIn(msg, r["error"])
+
+
+class RerunTests(Server):
+    def test_rerun_preview_and_job(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            run = test_rerun.escalated_run(lambda *a, **kw: self.real_run_build(*a, verbose_graph=False, **kw))
+        status, d = self.call(f"/api/runs/{run.name}")
+        self.assertTrue(d["actions"]["rerun"])
+        tasks = {t["id"]: t for t in d["plan"]["tasks"]}
+        self.assertNotIn("rerun", tasks["T1"])
+        self.assertEqual(tasks["T2"]["rerun"], {"ok": True, "tasks": ["T2", "T3"]})
+        self.assertFalse(tasks["T3"]["rerun"]["ok"])
+        self.assertIn("T3 needs T2 (dropped)", tasks["T3"]["rerun"]["error"])
+        self.assertEqual(json.loads((run / "plan.json").read_text(encoding="utf-8"))["tasks"][1]["status"],
+                         "dropped", "the preview changes nothing")
+
+        status, r = self.call("/api/jobs", {"kind": "rerun", "run": run.name})
+        self.assertEqual(status, 400)
+        self.assertIn("Say which task", r["error"])
+
+        self.models.append(test_rerun.FakeModel(list(test_rerun.RERUN_T2)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            job = self.start({"kind": "rerun", "run": run.name, "tasks": ["T2"]})
+            evs = self.events(job["id"])
+        self.assertEqual(job["request"], "re-run T2")
+        self.assertEqual((evs[-1]["type"], evs[-1].get("status"), evs[-1]["run_id"]), ("done", "accepted", run.name))
+        self.assertTrue(any(e["type"] == "say" and "re-running: T2, T3" in e["text"] for e in evs))
+        status, d = self.call(f"/api/runs/{run.name}")
+        self.assertEqual([t["status"] for t in d["plan"]["tasks"]], ["done", "done", "done"])
+        self.assertFalse(d["actions"]["rerun"])
+
+
+    def test_replan_job_with_a_comment(self):
+        import test_replan
+        with contextlib.redirect_stdout(io.StringIO()):
+            run = test_rerun.escalated_run(lambda *a, **kw: self.real_run_build(*a, verbose_graph=False, **kw))
+        status, d = self.call(f"/api/runs/{run.name}")
+        self.assertEqual({t["id"]: t["replan"] for t in d["plan"]["tasks"]}, {"T1": False, "T2": True, "T3": True})
+        status, r = self.call("/api/jobs", {"kind": "replan", "run": run.name, "request": "x"})
+        self.assertEqual((status, r["error"]), (400, "Say which task to re-plan."))
+
+        model = test_rerun.FakeModel([
+            test_replan.revision(test_rerun.task("R2-1", {"file": "cli.py"}, ["T1"])),
+            test_rerun.write("cli.py"), test_rerun.final(), test_rerun.verdict("accept")])
+        self.models.append(model)
+        with contextlib.redirect_stdout(io.StringIO()):
+            job = self.start({"kind": "replan", "run": run.name, "task": "T2", "request": "make it one small CLI task"})
+            evs = self.events(job["id"])
+        self.assertEqual(job["request"], "re-plan T2: make it one small CLI task")
+        self.assertEqual((evs[-1]["type"], evs[-1].get("status")), ("done", "accepted"), evs[-1])
+        self.assertIn("make it one small CLI task", model.calls[0]["messages"][0]["content"])
+        status, d = self.call(f"/api/runs/{run.name}")
+        self.assertEqual({t["id"]: t["status"] for t in d["plan"]["tasks"]},       # T3 now comes after R2-1
+                         {"T1": "done", "T2": "dropped", "T3": "dropped", "R2-1": "done"})
 
 
 class ReadingTests(Server):

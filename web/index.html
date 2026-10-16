@@ -63,6 +63,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
 button.danger { color: var(--bad); border-color: var(--bad); }
 button:disabled { opacity: .5; cursor: default; }
+.tablewrap { overflow-x: auto; }
+button.small { padding: 2px 8px; font-size: 12.5px; white-space: nowrap; }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 12px; flex-wrap: wrap; }
 .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 7px 12px; color: var(--muted); }
 .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
@@ -208,8 +210,9 @@ th { color: var(--muted); font-weight: 550; font-size: 12.5px; }
           <div id="runErr"></div>
           <div class="row" id="runActions" style="margin-top:10px"></div>
           <form id="fixForm" class="hide" style="display:grid;gap:8px;margin-top:10px">
-            <label>What should change?<textarea id="fixReq" placeholder="list crashes on an empty file"></textarea></label>
-            <div class="row"><button class="primary" type="submit">Start fix</button><button type="button" id="fixCancel">Cancel</button></div>
+            <label><span id="fixLabel">What should change?</span><textarea id="fixReq" placeholder="list crashes on an empty file"></textarea></label>
+            <p class="muted small hide" id="fixHint" style="margin:0"></p>
+            <div class="row"><button class="primary" type="submit" id="fixSubmit">Start fix</button><button type="button" id="fixCancel">Cancel</button></div>
           </form>
         </div>
         <div class="card">
@@ -338,7 +341,7 @@ function attach(job, switchTo) {
   state.job = job; state.lastSeq = 0; state.steps = 0;
   clear($("feed")); clear($("liveEnd")); $("qForm").classList.add("hide");
   $("liveReq").textContent = job.request || (job.kind === "resume" ? "Resuming a run" : "");
-  $("liveTitle").textContent = { build: "Building", plan: "Planning", review: "Reviewing", resume: "Resuming", fix: "Fixing" }[job.kind] || "Running";
+  $("liveTitle").textContent = { build: "Building", plan: "Planning", review: "Reviewing", resume: "Resuming", fix: "Fixing", rerun: "Re-running", replan: "Re-planning" }[job.kind] || "Running";
   $("livePlan").textContent = "No plan yet.";
   updateJob();
   $("liveBtn").classList.remove("hide");
@@ -447,18 +450,31 @@ function verdictLine(v) {
   const reqs = v.requirements || [];
   return `judge: ${v.verdict} — ${reqs.filter(r => r.met).length}/${reqs.length} requirements met${v.summary ? `. ${v.summary}` : ""}`;
 }
-function renderPlan(box, plan, current) {
+function renderPlan(box, plan, current, runId) {
   clear(box);
   if (!plan) { box.append(el("span", { class: "muted small" }, "No plan yet.")); return; }
   box.append(el("p", { style: "margin:0 0 8px" }, el("b", {}, plan.title || ""), plan.summary ? el("span", { class: "muted" }, ` — ${plan.summary}`) : null));
+  const canAct = runId && (plan.tasks || []).some(x => x.rerun || x.replan);
   const t = el("table", {}, el("tr", {}, el("th", {}, "task"), el("th", {}, "title"), el("th", {}, "status"), el("th", {}, "steps"), el("th", {}, "done when")));
   for (const task of plan.tasks || []) {
     const dw = task.done_when ? (task.done_when.command || (task.done_when.file ? `file ${task.done_when.file}` : JSON.stringify(task.done_when))) : "";
     t.append(el("tr", {}, el("td", {}, el("code", {}, task.id || "")), el("td", {}, task.title || ""),
-      el("td", {}, task.id === current && task.status !== "done" ? pill("running") : pill(task.status)),
+      el("td", {}, task.id === current && task.status !== "done" ? pill("running") : pill(task.status),
+        canAct && (task.rerun || task.replan) ? el("div", { class: "row", style: "margin-top:4px;gap:4px" }, rerunButton(runId, task),
+          task.replan ? el("button", { class: "small", title: "Replace this task with new tasks, e.g. smaller ones", onclick: () => openFix(task) }, "Re-plan…") : null) : null),
       el("td", {}, task.steps ?? ""), el("td", {}, el("code", {}, dw))));
   }
-  box.append(t);
+  box.append(el("div", { class: "tablewrap" }, t));
+}
+function rerunButton(runId, task) {
+  const r = task.rerun;
+  if (!r) return null;
+  if (!r.ok) return el("button", { class: "small", disabled: true, title: r.error }, "Re-run");
+  const others = r.tasks.filter(x => x !== task.id);
+  const question = `Re-run ${task.id}?` + (others.length ? ` This also reopens ${others.join(", ")} (they depend on it).` : "") +
+    " The run continues from there, then the judge reviews it again.";
+  return el("button", { class: "small", title: `Reopens ${r.tasks.join(", ")}`,
+    onclick: () => { if (confirm(question)) startJob({ kind: "rerun", run: runId, tasks: [task.id] }); } }, "Re-run");
 }
 async function openRun(id, keepTab) {
   flash("");
@@ -485,7 +501,7 @@ function renderRun() {
   else {
     if (d.actions.build_plan) acts.append(el("button", { class: "primary", onclick: () => startJob({ kind: "resume", run: d.id }) }, "Build this plan"));
     else if (d.actions.resume) acts.append(el("button", { class: "primary", onclick: () => startJob({ kind: "resume", run: d.id }) }, "Resume"));
-    if (d.actions.fix) acts.append(el("button", { onclick: () => { $("fixForm").classList.remove("hide"); $("fixReq").focus(); } }, "Fix or add…"));
+    if (d.actions.fix) acts.append(el("button", { onclick: () => openFix(null) }, "Fix or add…"));
     if (d.actions.apply) {
       const ap = d.apply || {};
       const n = (ap.changed || []).length + (ap.added || []).length + (ap.deleted || []).length;
@@ -519,7 +535,7 @@ async function renderTab() {
     }
     if (s.final_checks && s.final_checks.length) body.append(el("p", { class: "small" }, "final checks: ",
       ...s.final_checks.map(c => el("span", { class: `pill ${c.ok ? "ok" : "bad"}`, style: "margin-right:4px" }, `${c.ok ? "✓" : "✗"} ${c.target || c.kind || ""}`))));
-    const planBox = el("div"); renderPlan(planBox, d.plan, d.current_task); body.append(planBox);
+    const planBox = el("div"); renderPlan(planBox, d.plan, d.current_task, d.actions.rerun && !(state.job && state.job.run_id === d.id && !jobOver()) ? d.id : null); body.append(planBox);
     if (d.apply) {
       const ap = d.apply;
       const box = el("div", { style: "margin-top:14px" }, el("h3", {}, "Apply to the original folder"));
@@ -576,8 +592,24 @@ async function exportRun(id, what, button) {
   } catch (e) { flash(`Export failed: ${e.message}`); }
   finally { button.disabled = false; button.textContent = label; }
 }
+function openFix(task) {          // task: re-plan that task (Chapter G); null: a fix for the whole run
+  state.fixTask = task ? task.id : null;
+  $("fixLabel").textContent = task ? `How should ${task.id} (“${task.title}”) be re-planned?` : "What should change?";
+  $("fixReq").value = "";
+  $("fixReq").placeholder = task ? "Break it into smaller tasks, each with its own check." : "list crashes on an empty file";
+  $("fixHint").textContent = task ? `The reviser replaces ${task.id} with new tasks; tasks that depended on it will depend on the new ones. Leave the box empty to break it into smaller tasks.` : "";
+  $("fixHint").classList.toggle("hide", !task);
+  $("fixSubmit").textContent = task ? "Re-plan" : "Start fix";
+  $("fixForm").classList.remove("hide");
+  $("fixForm").scrollIntoView({ block: "nearest" });
+  $("fixReq").focus();
+}
 $("fixCancel").addEventListener("click", () => $("fixForm").classList.add("hide"));
-$("fixForm").addEventListener("submit", (e) => { e.preventDefault(); startJob({ kind: "fix", run: state.runId, request: $("fixReq").value }); });
+$("fixForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (state.fixTask) startJob({ kind: "replan", run: state.runId, task: state.fixTask, request: $("fixReq").value });
+  else startJob({ kind: "fix", run: state.runId, request: $("fixReq").value });
+});
 
 // ---------------------------------------------------------------- text renderers (text nodes only; nothing is parsed as HTML)
 function diffView(text) {

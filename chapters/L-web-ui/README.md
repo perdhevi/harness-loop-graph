@@ -33,7 +33,7 @@ A browser front end for what `main.py build`, `review`, `apply`, `runs` and `tra
     | GET | `/api/runs/<id>/trace` | the `trace --steps` view as text |
     | GET | `/api/runs/<id>/export?what=project\|run` | a `.zip` download: the generated code (`workspace/`), or the whole run folder; caches and virtualenvs left out |
     | GET | `/api/jobs/<id>/events` | SSE stream of the job's events (honours `Last-Event-ID`) |
-    | POST | `/api/jobs` | start `build`, `plan` (plan only), `review`, `resume` (also builds a reviewed plan) or `fix` |
+    | POST | `/api/jobs` | start `build`, `plan` (plan only), `review`, `resume` (also builds a reviewed plan), `fix`, `rerun` or `replan` (tasks of a finished run, Chapter G) |
     | POST | `/api/jobs/<id>/answers` | answers to the planner's questions |
     | POST | `/api/jobs/<id>/stop` | stop after the current model or tool call; the run stays resumable |
     | POST | `/api/runs/<id>/apply` | `apply_run` / `undo_apply`, with `dry_run` and `force` |
@@ -59,7 +59,7 @@ A browser front end for what `main.py build`, `review`, `apply`, `runs` and `tra
 
 ## Done when
 
-- [x] A build, a plan-only run, a review, a resume and a fix can be started from the page and followed live
+- [x] A build, a plan-only run, a review, a resume, a fix, a task re-run and a task re-plan can be started from the page and followed live
 - [x] The planner's questions show up in the page, and its answers reach the planner
 - [x] Stop leaves an `interrupted` run that resumes from the page or from `build --resume`
 - [x] The run list and run view read old run folders (no `summary.json`, no trace, no index row)
@@ -72,8 +72,8 @@ A browser front end for what `main.py build`, `review`, `apply`, `runs` and `tra
 ```bash
 python main.py gui                        # http://127.0.0.1:8765 opens in your browser
 python main.py gui --port 9000 --no-browser
-python -m unittest tests.test_gui -v           # 12 tests
-python -m unittest discover -s tests -v   # 290 tests, no model needed
+python -m unittest tests.test_gui -v           # 14 tests
+python -m unittest discover -s tests -v   # 307 tests, no model needed
 ```
 
 ## Known limits

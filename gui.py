@@ -29,7 +29,7 @@ from apply import ApplyError, apply_run, plan_apply, undo_apply
 from model_adapter import ModelError
 from models import describe_roles
 from pipeline import RESUMABLE_ENDED, RunStopped
-from planner import PlanError
+from planner import REOPENABLE, PlanError, reopen_tasks
 from tools.mcp_client import McpError
 from trace_view import load_events, render
 
@@ -37,7 +37,7 @@ WEB_DIR = Path(__file__).parent / "web"
 DOCS = ("SPEC.md", "REPORT.md", "REVIEW.md", "CHANGES.patch", "plan.json")
 EXPORT_SKIP_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "venv", "node_modules", ".git"}
 EXPORT_SKIP_SUFFIXES = (".pyc", ".pyo", ".tmp")
-KINDS = ("build", "plan", "review", "resume", "fix")
+KINDS = ("build", "plan", "review", "resume", "fix", "rerun", "replan")
 RUN_ID = re.compile(r"^[A-Za-z0-9][\w.-]*$")
 MAX_BODY = 1_000_000
 KEEPALIVE_S = 15.0
@@ -170,10 +170,14 @@ class Job:
             kw["from_run"] = p["run_dir"]
         elif self.kind == "fix":
             kw.update(from_run=p["run_dir"], fix=p["request"])
+        elif self.kind == "replan":
+            kw.update(from_run=p["run_dir"], replan=p["task"], fix=p.get("comment") or "")
+        elif self.kind == "rerun":
+            kw.update(from_run=p["run_dir"], rerun=p["tasks"], rerun_dependents=p.get("dependents", True) is not False)
         return kw
 
     def run(self) -> None:
-        request = None if self.kind in ("resume", "fix") else self.params["request"]
+        request = None if self.kind in ("resume", "fix", "rerun", "replan") else self.params["request"]
         try:
             summary = main.run_build(request, **self.kwargs())
         except RunStopped as e:
@@ -232,8 +236,21 @@ class JobRunner:
                 raise GuiError(f"not a folder: {p.get('path') or '(empty)'}")
             p["path"] = str(path.resolve())
             p["request"] = p["request"] or "Review the project for bugs and fix what you find."
-        if kind in ("resume", "fix"):
+        if kind in ("resume", "fix", "rerun", "replan"):
             p["run_dir"] = str(run_path(self.runs_dir, str(p.get("run") or "")))
+        if kind == "replan":
+            if not isinstance(p.get("task"), str) or not p["task"].strip():
+                raise GuiError("Say which task to re-plan.")
+            p["task"] = p["task"].strip()
+            p["comment"] = p["request"]
+            p["request"] = f"re-plan {p['task']}" + (f": {p['comment']}" if p["comment"] else "")
+        if kind == "rerun":
+            tasks = p.get("tasks")
+            tasks = tasks.replace(",", " ").split() if isinstance(tasks, str) else tasks
+            if not isinstance(tasks, list) or not tasks or not all(isinstance(t, str) and t.strip() for t in tasks):
+                raise GuiError("Say which task(s) to re-run, e.g. [\"T3\"].")
+            p["tasks"] = [t.strip() for t in tasks]
+            p["request"] = f"re-run {', '.join(p['tasks'])}"
         if p.get("max_iterations") not in (None, ""):
             try:
                 if int(p["max_iterations"]) < 1:
@@ -300,7 +317,9 @@ def _index(runs_dir: Path) -> dict[str, dict]:
 def _actions(state: dict, run: Path) -> dict:
     status, nxt = state.get("status"), state.get("next")
     summary = _read_json(run / "summary.json") or {}
+    finished = bool(state.get("plan")) and not nxt and status not in RESUMABLE_ENDED | {"planned", "plan_failed"}
     return {"resume": bool(nxt) or status in RESUMABLE_ENDED,
+            "rerun": finished and any(t.get("status") in REOPENABLE for t in state["plan"].get("tasks") or []),
             "build_plan": status == "planned" and bool(nxt),
             "fix": bool(state.get("plan")) and not nxt and status not in RESUMABLE_ENDED | {"planned", "plan_failed"},
             "apply": bool(summary.get("source")) and (run / "original").is_dir()}
@@ -349,6 +368,15 @@ def run_detail(runs_dir: Path, run_id: str) -> dict:
             {"id": t.get("id"), "title": t.get("title"), "status": t.get("status", "todo"), "steps": t.get("steps"),
              "files": t.get("files"), "done_when": t.get("done_when"), "verified": t.get("verified")}
             for t in plan.get("tasks") or []]}
+        for t in out["plan"]["tasks"]:                  # Chapter G: --replan works on unfinished tasks
+            t["replan"] = out["actions"]["fix"] and t["status"] != "done"
+        if out["actions"]["rerun"]:                     # what a re-run of each task would reopen, or why not
+            for t in out["plan"]["tasks"]:
+                if t["status"] in REOPENABLE:
+                    try:
+                        t["rerun"] = {"ok": True, "tasks": reopen_tasks(json.loads(json.dumps(plan)), [t["id"]])}
+                    except PlanError as e:
+                        t["rerun"] = {"ok": False, "error": str(e)}
     if out["actions"]["apply"]:
         try:
             out["apply"] = plan_apply(run)
